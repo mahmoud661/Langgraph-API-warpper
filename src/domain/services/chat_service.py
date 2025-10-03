@@ -1,6 +1,6 @@
+"""Chat Service module."""
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime
 from typing import Any, cast
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, RemoveMessage
@@ -73,17 +73,6 @@ class ChatService:
         last_message = messages[-1]
         if not isinstance(last_message, AIMessage):
             raise ValueError("Expected AI response but got different message type")
-
-        user_message_text = self._extract_display_text_from_content_blocks(content)
-        assistant_content_blocks = self._convert_langchain_to_content_blocks(last_message.content)
-        assistant_message_text = self._extract_display_text_from_content_blocks(assistant_content_blocks)
-
-        await self._save_or_update_thread(
-            thread_id=thread_id,
-            user_message=user_message_text,
-            assistant_message=assistant_message_text,
-            user_id=user_id
-        )
 
         return {
             "thread_id": thread_id,
@@ -161,18 +150,6 @@ class ChatService:
                                             "type": "token",
                                             "content": text
                                         }
-
-            user_message_text = self._extract_display_text_from_content_blocks(content)
-
-            if accumulated_content:
-                await self._save_or_update_thread(
-                    thread_id=thread_id,
-                    user_message=user_message_text,
-                    assistant_message=accumulated_content,
-                    user_id=user_id
-                )
-
-            yield {"type": "done"}
 
         except Exception as e:
             yield {
@@ -523,52 +500,3 @@ class ChatService:
             elif isinstance(block, AudioContent):
                 parts.append("[Audio]")
         return " ".join(parts).strip()
-
-    async def _save_or_update_thread(
-        self,
-        thread_id: str,
-        user_message: str,
-        assistant_message: str,
-        user_id: str = "default"
-    ) -> None:
-        """
-        Save or update thread metadata in the database.
-
-        Args:
-            thread_id: Thread ID
-            user_message: User's message text for title generation
-            assistant_message: Assistant's message text for preview
-            user_id: User ID
-        """
-        async with self.db_session_maker() as session:
-            stmt = select(Thread).where(Thread.thread_id == thread_id)
-            result = await session.execute(stmt)
-            thread = result.scalar_one_or_none()
-
-            if thread is None:
-                if user_message:
-                    title = user_message[:50] if len(user_message) > 50 else user_message
-                else:
-                    title = "New Conversation"
-
-                last_msg = assistant_message[:200] if len(assistant_message) > 200 else assistant_message
-                if not last_msg:
-                    last_msg = "(no text)"
-
-                thread = Thread(
-                    thread_id=thread_id,
-                    user_id=user_id,
-                    title=title,
-                    last_message=last_msg,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow()
-                )
-                session.add(thread)
-            else:
-                last_msg = assistant_message[:200] if len(assistant_message) > 200 else assistant_message
-                if not last_msg:
-                    last_msg = "(no text)"
-                thread.last_message = last_msg
-                thread.updated_at = datetime.utcnow()
-
-            await session.commit()
