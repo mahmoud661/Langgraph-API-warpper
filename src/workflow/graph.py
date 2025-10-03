@@ -1,33 +1,39 @@
-"""Graph module."""
+"""Graph module for creating LangGraph workflow with built-in tool handling."""
 
 import os
 from typing import Annotated, Literal, TypedDict
 
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import BaseMessage, ToolMessage
+from langchain_core.messages import BaseMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
 from langgraph.types import RetryPolicy
 
 from src.workflow.tools import calculator_tool, search_tool
 
 
 class AgentState(TypedDict):
-    """AgentState class."""
+    """State definition for the agent workflow.
 
+    Contains the conversation messages that flow through the graph nodes.
+    """
     messages: Annotated[list[BaseMessage], add_messages]
 
 
 def call_llm(state: AgentState) -> dict:
-    """Call Llm.
+    """Call LLM with bound tools.
 
     Args:
-        state: Description of state.
+        state: The current agent state containing messages.
 
     Returns:
-        Description of return value.
+        Dictionary containing the LLM response message.
     """
+    # Define available tools
+    available_tools = [calculator_tool, search_tool]
 
+    # Initialize and configure the LLM
     llm = init_chat_model(
         model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp"),
         model_provider="google-genai",
@@ -35,61 +41,29 @@ def call_llm(state: AgentState) -> dict:
         temperature=1.0,
         max_retries=3,
     )
-    llm = llm.bind_tools([search_tool, calculator_tool])
-    response = llm.invoke(state["messages"])
+
+    # Bind tools to the LLM
+    llm_with_tools = llm.bind_tools(available_tools)
+
+    # Invoke the LLM with the current messages
+    response = llm_with_tools.invoke(state["messages"])
 
     return {"messages": [response]}
 
 
-def tool_node(state: AgentState) -> dict:
-    """Tool Node.
-
-    Args:
-        state: Description of state.
-
-    Returns:
-        Description of return value.
-    """
-
-    last_message = state["messages"][-1]
-    tool_calls = getattr(last_message, "tool_calls", [])
-
-    tool_messages = []
-
-    tools_map = {
-        "search_tool": search_tool,
-        "calculator_tool": calculator_tool,
-    }
-
-    for tool_call in tool_calls:
-        tool_name = tool_call.get("name")
-        tool_args = tool_call.get("args", {})
-
-        if tool_name in tools_map:
-            result = tools_map[tool_name](**tool_args)
-            tool_messages.append(
-                ToolMessage(
-                    content=str(result),
-                    tool_call_id=tool_call.get("id"),
-                    name=tool_name,
-                )
-            )
-
-    return {"messages": tool_messages}
-
-
 def should_continue(state: AgentState) -> Literal["tools", "end"]:
-    """Should Continue.
+    """Determine if the workflow should continue to tools or end.
 
     Args:
-        state: Description of state.
+        state: The current agent state containing messages.
 
     Returns:
-        Description of return value.
+        "tools" if the last message contains tool calls, "end" otherwise.
     """
 
     last_message = state["messages"][-1]
 
+    # Check if the LLM wants to use any tools
     tool_calls = getattr(last_message, "tool_calls", [])
     if tool_calls:
         return "tools"
@@ -97,20 +71,32 @@ def should_continue(state: AgentState) -> Literal["tools", "end"]:
 
 
 def create_workflow():
-    """Create Workflow.
-
+    """Create workflow with built-in ToolNode.
 
     Returns:
-        Description of return value.
+        StateGraph: Compiled workflow graph ready for execution.
     """
+    # Define available tools for the ToolNode
+    available_tools = [calculator_tool, search_tool]
 
+    # Create the workflow graph
     workflow = StateGraph(AgentState)
 
+    # Add nodes
     workflow.add_node("agent", call_llm)
-    workflow.add_node("tools", tool_node, retry_policy=RetryPolicy(max_attempts=3))
+    workflow.add_node(
+        "tools",
+        ToolNode(available_tools),
+        retry_policy=RetryPolicy(max_attempts=3)
+    )
 
+    # Define the flow
     workflow.add_edge(START, "agent")
-    workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})
+    workflow.add_conditional_edges(
+        "agent",
+        should_continue,
+        {"tools": "tools", "end": END}
+    )
     workflow.add_edge("tools", "agent")
 
     return workflow

@@ -6,7 +6,7 @@ from typing import Any
 
 from langgraph.types import interrupt
 
-from domain.models import InterruptPayload
+from src.domain.models import InterruptPayload
 
 
 def require_approval(tool_func: Callable) -> Callable:
