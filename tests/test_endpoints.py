@@ -3,7 +3,8 @@ Endpoint tests for LangGraph Workflow and Chat API
 Tests API structure, validation, and schema compliance
 """
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
+
 from src.main import app
 
 
@@ -39,7 +40,7 @@ async def test_chat_endpoints_in_schema():
         response = await client.get("/openapi.json")
         data = response.json()
         paths = data["paths"]
-        
+
         assert "/chat/send" in paths
         assert "/chat/stream" in paths
         assert "/chat/history/{thread_id}" in paths
@@ -57,7 +58,7 @@ async def test_workflow_endpoints_in_schema():
         response = await client.get("/openapi.json")
         data = response.json()
         paths = data["paths"]
-        
+
         assert "/workflow/stream" in paths
         assert "/workflow/resume/{thread_id}" in paths
         assert "/workflow/state/{thread_id}" in paths

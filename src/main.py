@@ -1,19 +1,20 @@
 """Main module."""
 
-from contextlib import asynccontextmanager
-
 from dotenv import load_dotenv
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
-from src.api.routes import chat, chat_websocket, websocket
-from src.domain.services.chat_service import ChatService
-from src.infra.database.connection import AsyncSessionLocal, engine
-from src.infra.models.thread import Base as ThreadBase
-from src.workflow.chat_runner import create_chat_runner
-from src.workflow.runner import create_workflow_runner
 
 load_dotenv()
+
+from contextlib import asynccontextmanager  # noqa: E402
+
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+from src.api.routes import chat, chat_websocket, websocket  # noqa: E402
+from src.domain.services.chat_service import ChatService  # noqa: E402
+from src.infra.database.connection import AsyncSessionLocal, engine  # noqa: E402
+from src.infra.models.thread import Base as ThreadBase  # noqa: E402
+from src.workflow.chat_runner import create_chat_runner  # noqa: E402
+from src.workflow.runner import create_workflow_runner  # noqa: E402
 
 
 @asynccontextmanager

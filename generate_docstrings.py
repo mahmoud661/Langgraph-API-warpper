@@ -71,7 +71,7 @@ class DocstringGenerator:
         # Check for module docstring
         if not ast.get_docstring(tree):
             module_docstring = self.generate_module_docstring(filepath)
-            modifications.append((0, 0, module_docstring + "\n"))
+            modifications.append((0, module_docstring))
 
         # Walk through all nodes
         for node in ast.walk(tree):
@@ -82,14 +82,30 @@ class DocstringGenerator:
                     else:
                         docstring = self.generate_function_docstring(node)
 
-                    # Insert after the function/class definition line
-                    insert_line = node.lineno
-                    indent = "    " * (node.col_offset // 4 + 1)
-                    indented_docstring = "\n".join(indent + line if line.strip() else line for line in docstring.split("\n"))
-                    modifications.append((insert_line, 0, indented_docstring + "\n"))
+                    # Find the line that ends the function signature (ends with ':')
+                    signature_end_line = None
 
-        # Apply modifications (in reverse order to maintain line numbers)
-        for line_num, _, text in sorted(modifications, reverse=True):
+                    # Start from the function definition line and search forward
+                    # Look for a line that ends with ':' (the end of function signature)
+                    for i in range(node.lineno - 1, min(len(lines), node.lineno + 20)):
+                        stripped_line = lines[i].strip()
+                        if stripped_line.endswith(':'):
+                            # Make sure this is actually the function signature end
+                            # by checking it doesn't contain other colons (like type hints)
+                            # except for the final one
+                            signature_end_line = i
+                            break
+
+                    if signature_end_line is not None:
+                        # Insert docstring as first statement after the signature colon
+                        # Get proper indentation (function body level)
+                        base_indent = ' ' * (node.col_offset + 4)
+                        indented_docstring = '\n'.join(
+                            base_indent + line if line.strip() else ''
+                            for line in docstring.split('\n')
+                        )
+                        modifications.append((signature_end_line + 1, indented_docstring))        # Apply modifications (in reverse order to maintain line numbers)
+        for line_num, text in sorted(modifications, reverse=True):
             lines.insert(line_num, text)
 
         return "\n".join(lines)

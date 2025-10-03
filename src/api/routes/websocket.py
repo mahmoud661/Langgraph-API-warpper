@@ -1,3 +1,4 @@
+"""Websocket module."""
 import json
 import uuid
 
@@ -8,6 +9,11 @@ router = APIRouter(prefix="/ws", tags=["websocket"])
 
 @router.websocket("/workflow")
 async def websocket_workflow(websocket: WebSocket):
+    """Websocket Workflow.
+
+        Args:
+            websocket: Description of websocket.
+        """
     await websocket.accept()
 
     try:

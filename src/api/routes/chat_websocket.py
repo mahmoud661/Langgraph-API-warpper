@@ -32,7 +32,6 @@ async def save_or_update_thread(
             user_id: Description of user_id.
         """
 
-
     async with session_maker() as session:
         stmt = select(Thread).where(Thread.thread_id == thread_id)
         result = await session.execute(stmt)
@@ -84,13 +83,10 @@ def parse_content_blocks(content_data: list) -> List[ContentBlock]:
             if content_type == "text":
                 content_blocks.append(TextContent(**item))
             elif content_type == "image":
-                from src.domain.chat_content import ImageContent
                 content_blocks.append(ImageContent(**item))
             elif content_type == "file":
-                from src.domain.chat_content import FileContent
                 content_blocks.append(FileContent(**item))
             elif content_type == "audio":
-                from src.domain.chat_content import AudioContent
                 content_blocks.append(AudioContent(**item))
             else:
                 content_blocks.append(TextContent(data=str(item)))
@@ -308,10 +304,10 @@ async def websocket_chat(websocket: WebSocket):
                 "type": "error",
                 "error": f"WebSocket error: {str(e)}"
             })
-        except:
+        except Exception:
             pass
         finally:
             try:
                 await websocket.close()
-            except:
+            except Exception:
                 pass
