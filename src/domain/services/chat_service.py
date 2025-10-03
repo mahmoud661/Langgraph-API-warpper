@@ -5,10 +5,8 @@ from typing import Any, cast
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, RemoveMessage
 from langchain_core.runnables import RunnableConfig
-from sqlalchemy import select
 
-from src.domain.chat_content import AudioContent, ContentBlock, FileContent, ImageContent, SourceType, TextContent
-from src.infra.models.thread import Thread
+from src.domain.chat_content import ContentBlock
 from src.workflow.chat_runner import ChatRunner
 
 
@@ -23,7 +21,7 @@ class ChatService:
     - Returns raw LangGraph messages with IDs (doesn't serialize to API schemas)
     """
 
-    def __init__(self, chat_runner: ChatRunner, db_session_maker):
+    def __init__(self, chat_runner: ChatRunner):
         """
         Initialize the chat service with dependencies.
 
@@ -32,7 +30,6 @@ class ChatService:
             db_session_maker: SQLAlchemy async session maker for database operations
         """
         self.chat_runner = chat_runner
-        self.db_session_maker = db_session_maker
 
     async def send_message(
         self,
@@ -58,8 +55,7 @@ class ChatService:
         if thread_id is None:
             thread_id = str(uuid.uuid4())
 
-        content_blocks = self._convert_content_blocks_to_langchain(content)
-        human_message = HumanMessage(content=cast(list, content_blocks))
+        human_message = HumanMessage(content=cast(list, content))
 
         result = await self.chat_runner.run(
             messages=[human_message],
@@ -113,8 +109,7 @@ class ChatService:
         }
 
         try:
-            content_blocks = self._convert_content_blocks_to_langchain(content)
-            human_message = HumanMessage(content=cast(list, content_blocks))
+            human_message = HumanMessage(content=cast(list, content))
 
             async for event in self.chat_runner.stream(
                 messages=[human_message],
@@ -198,16 +193,15 @@ class ChatService:
         messages_to_update = []
 
         if modified_content:
-            content_blocks = self._convert_content_blocks_to_langchain(modified_content)
 
             if isinstance(target_message, HumanMessage):
                 updated_message = HumanMessage(
-                    content=cast(list, content_blocks),
+                    content=cast(list, modified_content),
                     id=message_id
                 )
             elif isinstance(target_message, AIMessage):
                 text_content = ""
-                for block in content_blocks:
+                for block in modified_content:
                     if isinstance(block, dict) and block.get("type") == "text":
                         text_content = block.get("text", "")
                         break
@@ -276,39 +270,16 @@ class ChatService:
             "state": state
         }
 
-    async def get_threads(self, user_id: str = "default") -> list[dict[str, Any]]:
+    async def get_threads(self, user_id: str = "default") -> None:
         """
-        Get list of threads for a user from database.
+        Get list of threads for a user from the database.
 
         Args:
             user_id: User ID to filter threads
-
-        Returns:
-            List of thread dictionaries containing:
-                - thread_id: str
-                - title: str
-                - created_at: datetime
-                - updated_at: datetime
-                - last_message: str
         """
-        async with self.db_session_maker() as session:
-            stmt = select(Thread).where(
-                Thread.user_id == user_id
-            ).order_by(Thread.updated_at.desc())
 
-            result = await session.execute(stmt)
-            threads = result.scalars().all()
-
-            return [
-                {
-                    "thread_id": thread.thread_id,
-                    "title": thread.title,
-                    "created_at": thread.created_at,
-                    "updated_at": thread.updated_at,
-                    "last_message": thread.last_message or ""
-                }
-                for thread in threads
-            ]
+        # TODO: make the runner get the threads
+        return []  # type: ignore
 
     async def get_checkpoints(
         self,
@@ -400,103 +371,3 @@ class ChatService:
             "status": "resumed_and_completed",
             "resumed_from_checkpoint": True
         }
-
-    def _convert_content_blocks_to_langchain(
-        self,
-        content_blocks: list[ContentBlock]
-    ) -> list[dict[str, Any]]:
-        """
-        Convert ContentBlock domain models to LangChain format.
-
-        Args:
-            content_blocks: List of ContentBlock objects
-
-        Returns:
-            List of dictionaries in LangChain format
-        """
-        return [block.to_langchain_format() for block in content_blocks]
-
-    def _convert_langchain_to_content_blocks(
-        self,
-        langchain_content: Any
-    ) -> list[ContentBlock]:
-        """
-        Convert LangChain message content to ContentBlock domain models.
-
-        Args:
-            langchain_content: LangChain message content (str, list, or dict)
-
-        Returns:
-            List of ContentBlock objects
-        """
-        content_blocks: list[ContentBlock] = []
-
-        if isinstance(langchain_content, str):
-            content_blocks = [TextContent(data=langchain_content)]
-        elif isinstance(langchain_content, list):
-            for item in langchain_content:
-                if isinstance(item, str):
-                    content_blocks.append(TextContent(data=item))
-                elif isinstance(item, dict):
-                    if item.get("type") == "text":
-                        content_blocks.append(TextContent(data=item.get("text", "")))
-                    elif item.get("type") == "image_url":
-                        image_url = item.get("image_url", {}).get("url", "")
-                        if image_url.startswith("data:"):
-                            parts = image_url.split(",", 1)
-                            if len(parts) == 2:
-                                mime_type = parts[0].split(";")[0].replace("data:", "")
-                                data = parts[1]
-                                content_blocks.append(ImageContent(
-                                    data=data,
-                                    mime_type=mime_type,
-                                    source_type=SourceType.BASE64
-                                ))
-                        else:
-                            content_blocks.append(ImageContent(
-                                data=image_url,
-                                mime_type="image/jpeg",
-                                source_type=SourceType.URL
-                            ))
-                    else:
-                        content_blocks.append(TextContent(data=str(item)))
-                else:
-                    content_blocks.append(TextContent(data=str(item)))
-        else:
-            content_blocks = [TextContent(data=str(langchain_content))]
-
-        return content_blocks
-
-    def _extract_display_text_from_content_blocks(
-        self,
-        content_blocks: list[ContentBlock]
-    ) -> str:
-        """
-        Extract display text from ContentBlocks for storage and display.
-
-        Handles all content types:
-        - TextContent: use actual text data
-        - ImageContent: use "[Image]"
-        - FileContent: use "[File: filename]" or "[File]"
-        - AudioContent: use "[Audio]"
-
-        Args:
-            content_blocks: List of ContentBlock objects
-
-        Returns:
-            Concatenated display text
-        """
-        parts = []
-        for block in content_blocks:
-            if isinstance(block, TextContent):
-                parts.append(block.data)
-            elif isinstance(block, ImageContent):
-                parts.append("[Image]")
-            elif isinstance(block, FileContent):
-                if block.filename:
-                    parts.append(f"[File: {block.filename}]")
-                else:
-                    parts.append("[File]")
-            elif isinstance(block, AudioContent):
-                parts.append("[Audio]")
-        return " ".join(parts).strip()
