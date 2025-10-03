@@ -2,7 +2,7 @@
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
-from api.schemas.chat import ChatMessage
+from api.dtos.chat import ChatMessage
 from src.domain.chat_content import ContentBlock, ImageContent, SourceType, TextContent
 
 
