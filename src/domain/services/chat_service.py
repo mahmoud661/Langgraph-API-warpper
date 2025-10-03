@@ -1,7 +1,7 @@
 """Chat Service module."""
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any, cast
+from typing import Any
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, RemoveMessage
 from langchain_core.runnables import RunnableConfig
@@ -55,7 +55,7 @@ class ChatService:
         if thread_id is None:
             thread_id = str(uuid.uuid4())
 
-        human_message = HumanMessage(content=cast(list, content))
+        human_message = HumanMessage(content=[block.to_langchain_format() for block in content])
 
         result = await self.chat_runner.run(
             messages=[human_message],
@@ -109,7 +109,7 @@ class ChatService:
         }
 
         try:
-            human_message = HumanMessage(content=cast(list, content))
+            human_message = HumanMessage(content=[block.to_langchain_format() for block in content])
 
             async for event in self.chat_runner.stream(
                 messages=[human_message],
@@ -196,7 +196,7 @@ class ChatService:
 
             if isinstance(target_message, HumanMessage):
                 updated_message = HumanMessage(
-                    content=cast(list, modified_content),
+                    content=[block.to_langchain_format() for block in modified_content],
                     id=message_id
                 )
             elif isinstance(target_message, AIMessage):
