@@ -1,6 +1,9 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from contextlib import asynccontextmanager
+"""Connection module."""
+
 import os
+from contextlib import asynccontextmanager
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -28,6 +31,9 @@ AsyncSessionLocal = async_sessionmaker(
 
 @asynccontextmanager
 async def get_db_session():
+    """Get Db Session.
+        """
+
     async with AsyncSessionLocal() as session:
         try:
             yield session

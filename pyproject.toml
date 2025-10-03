@@ -19,6 +19,7 @@ dependencies = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
     "httpx>=0.28.1",
+    "ruff>=0.13.3",
 ]
 
 [tool.black]
@@ -33,11 +34,10 @@ line_length = 200
 max-line-length = 200
 extend-ignore = ["E203", "W503"]
 
-[tool.pylint.messages_control]
-disable = [
-    "C0415",  # import-outside-toplevel
-    "C0303",  # trailing-whitespace (handled by editor)
-]
-
 [tool.pylint.format]
 max-line-length = 200
+
+[dependency-groups]
+dev = [
+    "ruff>=0.13.3",
+]

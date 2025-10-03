@@ -5,13 +5,17 @@ import argparse
 import ast
 import sys
 from pathlib import Path
-from typing import Union
 
 
 class DocstringGenerator:
     """Generate docstrings for Python code."""
 
     def __init__(self, style: str = "google"):
+        """Init  .
+
+        Args:
+            style: Description of style.
+        """
         self.style = style
 
     def generate_module_docstring(self, filename: str) -> str:
@@ -23,7 +27,7 @@ class DocstringGenerator:
         """Generate a class docstring."""
         return f'"""{node.name} class."""'
 
-    def generate_function_docstring(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> str:
+    def generate_function_docstring(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
         """Generate a function docstring."""
         args = []
         returns = ""
@@ -53,7 +57,7 @@ class DocstringGenerator:
 
     def add_docstrings_to_file(self, filepath: str) -> str:
         """Add missing docstrings to a Python file."""
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             content = f.read()
 
         try:
@@ -86,7 +90,7 @@ class DocstringGenerator:
 
         # Apply modifications (in reverse order to maintain line numbers)
         for line_num, _, text in sorted(modifications, reverse=True):
-            lines.insert(line_num, text.rstrip())
+            lines.insert(line_num, text)
 
         return "\n".join(lines)
 
@@ -116,6 +120,8 @@ def main():
             else:
                 with open(filepath, "w", encoding="utf-8") as f:
                     f.write(new_content)
+                    if not new_content.endswith("\n"):
+                        f.write("\n")
                 print(f"Updated {filepath}")
         except Exception as e:
             print(f"Error processing {filepath}: {e}", file=sys.stderr)

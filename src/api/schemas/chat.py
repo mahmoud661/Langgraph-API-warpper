@@ -1,23 +1,29 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Literal
+"""Chat module."""
+
 from datetime import datetime
-from src.domain.chat_content import ContentBlock, TextContent
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from src.domain.chat_content import ContentBlock
 
 
 class ChatMessage(BaseModel):
+    """ChatMessage class."""
+
     role: Literal["user", "assistant", "system"] = Field(
-        ..., 
+        ...,
         description="Role of the message sender"
     )
-    content: List[ContentBlock] = Field(
+    content: list[ContentBlock] = Field(
         ...,
         description="Multimodal message content as a list of content blocks"
     )
-    id: Optional[str] = Field(
+    id: str | None = Field(
         None,
         description="Message ID from LangGraph for tracking and time-travel"
     )
-    timestamp: Optional[datetime] = Field(
+    timestamp: datetime | None = Field(
         None,
         description="Timestamp of when the message was created"
     )
@@ -51,15 +57,17 @@ class ChatMessage(BaseModel):
 
 
 class ChatSendRequest(BaseModel):
-    content: List[ContentBlock] = Field(
+    """ChatSendRequest class."""
+
+    content: list[ContentBlock] = Field(
         ...,
         description="Multimodal message content to send to the assistant"
     )
-    thread_id: Optional[str] = Field(
+    thread_id: str | None = Field(
         None,
         description="Thread ID for continuing an existing conversation"
     )
-    model: Optional[str] = Field(
+    model: str | None = Field(
         "gemini-2.0-flash-exp",
         description="Model to use for the chat completion"
     )
@@ -89,15 +97,17 @@ class ChatSendRequest(BaseModel):
 
 
 class ChatStreamRequest(BaseModel):
-    content: List[ContentBlock] = Field(
+    """ChatStreamRequest class."""
+
+    content: list[ContentBlock] = Field(
         ...,
         description="Multimodal message content to send to the assistant"
     )
-    thread_id: Optional[str] = Field(
+    thread_id: str | None = Field(
         None,
         description="Thread ID for continuing an existing conversation"
     )
-    model: Optional[str] = Field(
+    model: str | None = Field(
         "gemini-2.0-flash-exp",
         description="Model to use for the chat completion"
     )
@@ -121,6 +131,8 @@ class ChatStreamRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    """ChatResponse class."""
+
     thread_id: str = Field(
         ...,
         description="Thread ID of the conversation"
@@ -157,11 +169,13 @@ class ChatResponse(BaseModel):
 
 
 class ChatHistoryResponse(BaseModel):
+    """ChatHistoryResponse class."""
+
     thread_id: str = Field(
         ...,
         description="Thread ID of the conversation"
     )
-    messages: List[ChatMessage] = Field(
+    messages: list[ChatMessage] = Field(
         ...,
         description="List of all messages in the conversation thread"
     )
@@ -200,6 +214,8 @@ class ChatHistoryResponse(BaseModel):
 
 
 class ThreadInfo(BaseModel):
+    """ThreadInfo class."""
+
     thread_id: str = Field(
         ...,
         description="Unique identifier for the thread"
@@ -232,7 +248,9 @@ class ThreadInfo(BaseModel):
 
 
 class ThreadListResponse(BaseModel):
-    threads: List[ThreadInfo] = Field(
+    """ThreadListResponse class."""
+
+    threads: list[ThreadInfo] = Field(
         ...,
         description="List of conversation threads"
     )
@@ -261,12 +279,14 @@ class ThreadListResponse(BaseModel):
     }
 
 
-class RetryRequest(BaseModel):
+class RetryChatRequest(BaseModel):
+    """RetryChatRequest class."""
+
     message_id: str = Field(
         ...,
         description="Message ID to retry/regenerate from (uses LangGraph's message ID merging)"
     )
-    content: Optional[List[ContentBlock]] = Field(
+    content: list[ContentBlock] | None = Field(
         None,
         description="Optional modified content to replace the message before regenerating"
     )

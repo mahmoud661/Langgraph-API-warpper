@@ -1,3 +1,5 @@
+"""Graph module."""
+
 import os
 from typing import Annotated, Literal, TypedDict
 
@@ -11,10 +13,21 @@ from src.workflow.tools import calculator_tool, search_tool
 
 
 class AgentState(TypedDict):
+    """AgentState class."""
+
     messages: Annotated[list[BaseMessage], add_messages]
 
 
 def call_llm(state: AgentState) -> dict:
+    """Call Llm.
+
+    Args:
+        state: Description of state.
+
+    Returns:
+        Description of return value.
+    """
+
     llm = init_chat_model(
         model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp"),
         model_provider="google-genai",
@@ -29,6 +42,14 @@ def call_llm(state: AgentState) -> dict:
 
 
 def tool_node(state: AgentState) -> dict:
+    """Tool Node.
+
+    Args:
+        state: Description of state.
+
+    Returns:
+        Description of return value.
+    """
 
     last_message = state["messages"][-1]
     tool_calls = getattr(last_message, "tool_calls", [])
@@ -58,6 +79,15 @@ def tool_node(state: AgentState) -> dict:
 
 
 def should_continue(state: AgentState) -> Literal["tools", "end"]:
+    """Should Continue.
+
+    Args:
+        state: Description of state.
+
+    Returns:
+        Description of return value.
+    """
+
     last_message = state["messages"][-1]
 
     tool_calls = getattr(last_message, "tool_calls", [])
@@ -67,15 +97,20 @@ def should_continue(state: AgentState) -> Literal["tools", "end"]:
 
 
 def create_workflow():
+    """Create Workflow.
+
+
+    Returns:
+        Description of return value.
+    """
+
     workflow = StateGraph(AgentState)
 
     workflow.add_node("agent", call_llm)
     workflow.add_node("tools", tool_node, retry_policy=RetryPolicy(max_attempts=3))
 
     workflow.add_edge(START, "agent")
-    workflow.add_conditional_edges(
-        "agent", should_continue, {"tools": "tools", "end": END}
-    )
+    workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})
     workflow.add_edge("tools", "agent")
 
     return workflow

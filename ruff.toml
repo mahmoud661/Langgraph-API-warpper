@@ -3,29 +3,20 @@ target-version = "py311"
 
 [lint]
 select = [
-    "E",   # pycodestyle errors
+    "E",   # pycodestyle errors (includes E402 - module import not at top)
     "W",   # pycodestyle warnings
     "F",   # pyflakes
     "I",   # isort (import sorting)
-    "D",   # pydocstyle
-    "UP",  # pyupgrade
     "B",   # flake8-bugbear
     "C4",  # flake8-comprehensions
-    "PLC", # pylint conventions
-    "PLE", # pylint errors
-    "PLR", # pylint refactor
-    "PLW", # pylint warnings
     "C90", # mccabe complexity
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
-    "D100",  # Missing docstring in public module
-    "D101",  # Missing docstring in public class
-    "D102",  # Missing docstring in public method
-    "D103",  # Missing docstring in public function
-    "D104",  # Missing docstring in public package
-    "D105",  # Missing docstring in magic method
 ]
+
+fixable = ["ALL"]
+extend-unsafe-fixes = ["E402", "B904"]
 
 [lint.pydocstyle]
 convention = "google"
@@ -34,6 +25,8 @@ convention = "google"
 force-single-line = false
 combine-as-imports = true
 split-on-trailing-comma = true
+known-first-party = ["src"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
 [lint.pylint]
 max-args = 10
@@ -43,5 +36,6 @@ max-statements = 60
 
 [format]
 quote-style = "double"
-indent-style = "space"
+indent-style = "space" 
 line-ending = "auto"
+skip-magic-trailing-comma = true

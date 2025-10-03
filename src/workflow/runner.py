@@ -2,7 +2,8 @@
 
 import os
 import uuid
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, cast
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any, cast
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -32,7 +33,7 @@ class WorkflowRunner:
         workflow = create_workflow()
         self.graph = workflow.compile(checkpointer=checkpointer)
 
-    async def run_workflow(self, input_data: Dict[str, Any], thread_id: Optional[str] = None) -> Dict[str, Any]:
+    async def run_workflow(self, input_data: dict[str, Any], thread_id: str | None = None) -> dict[str, Any]:
         """Run Workflow.
 
         Args:
@@ -57,7 +58,7 @@ class WorkflowRunner:
 
         return {"thread_id": thread_id, "result": result, "status": "interrupted" if "__interrupt__" in result else "completed"}
 
-    async def resume_workflow(self, thread_id: str, resume_value: Any) -> Dict[str, Any]:
+    async def resume_workflow(self, thread_id: str, resume_value: Any) -> dict[str, Any]:
         """Resume Workflow.
 
         Args:
@@ -73,7 +74,7 @@ class WorkflowRunner:
 
         return {"thread_id": thread_id, "result": result, "status": "interrupted" if "__interrupt__" in result else "completed"}
 
-    async def stream_workflow(self, input_data: Dict[str, Any], thread_id: Optional[str] = None, stream_mode: StreamMode = "messages") -> AsyncIterator[Dict[str, Any]]:
+    async def stream_workflow(self, input_data: dict[str, Any], thread_id: str | None = None, stream_mode: StreamMode = "messages") -> AsyncIterator[dict[str, Any]]:
         """Stream Workflow.
 
         Args:
@@ -96,7 +97,7 @@ class WorkflowRunner:
         async for chunk in self.graph.astream(cast("AgentState", {"messages": messages}), config=config, stream_mode=stream_mode):
             yield {"thread_id": thread_id, "chunk": chunk}
 
-    async def get_state(self, thread_id: str) -> Dict[str, Any]:
+    async def get_state(self, thread_id: str) -> dict[str, Any]:
         """Get State.
 
         Args:
@@ -110,7 +111,7 @@ class WorkflowRunner:
 
         return {"values": state.values, "next": state.next, "tasks": state.tasks, "interrupts": [{"id": i.id, "value": i.value} for i in (state.interrupts or [])]}
 
-    async def get_state_history(self, thread_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+    async def get_state_history(self, thread_id: str, limit: int = 10) -> list[dict[str, Any]]:
         """Get State History.
 
         Args:
@@ -133,7 +134,7 @@ class WorkflowRunner:
 
         return history
 
-    async def update_state(self, thread_id: str, values: Dict[str, Any], checkpoint_id: Optional[str] = None) -> Dict[str, Any]:
+    async def update_state(self, thread_id: str, values: dict[str, Any], checkpoint_id: str | None = None) -> dict[str, Any]:
         """Update State.
 
         Args:

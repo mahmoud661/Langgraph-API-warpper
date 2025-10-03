@@ -1,40 +1,41 @@
+from typing import Any, Literal
+
 from pydantic import BaseModel
-from typing import Any, Dict, List, Optional, Literal
 
 
 class RunWorkflowRequest(BaseModel):
     messages: Any
-    thread_id: Optional[str] = None
+    thread_id: str | None = None
 
 
 class RunWorkflowResponse(BaseModel):
     thread_id: str
-    result: Dict[str, Any]
+    result: dict[str, Any]
     status: str
 
 
 class ResumeWorkflowRequest(BaseModel):
     action: Literal["approve", "deny", "modify"]
-    modified_args: Optional[Dict[str, Any]] = None
+    modified_args: dict[str, Any] | None = None
 
 
 class ResumeWorkflowResponse(BaseModel):
     thread_id: str
-    result: Dict[str, Any]
+    result: dict[str, Any]
     status: str
 
 
 class GetStateResponse(BaseModel):
-    values: Dict[str, Any]
-    next: List[str]
-    tasks: List[Any]
-    interrupts: List[Dict[str, Any]]
+    values: dict[str, Any]
+    next: list[str]
+    tasks: list[Any]
+    interrupts: list[dict[str, Any]]
 
 
 class GetHistoryResponse(BaseModel):
-    history: List[Dict[str, Any]]
+    history: list[dict[str, Any]]
 
 
 class UpdateStateRequest(BaseModel):
-    values: Dict[str, Any]
-    checkpoint_id: Optional[str] = None
+    values: dict[str, Any]
+    checkpoint_id: str | None = None
