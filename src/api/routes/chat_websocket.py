@@ -7,63 +7,10 @@ from typing import List, cast
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
-from sqlalchemy import select
 
 from src.domain.chat_content import AudioContent, ContentBlock, FileContent, ImageContent, TextContent
-from src.infra.models.thread import Thread
 
 router = APIRouter(prefix="/ws", tags=["websocket-chat"])
-
-
-async def save_or_update_thread(
-    session_maker,
-    thread_id: str,
-    user_message: str,
-    assistant_message: str,
-    user_id: str = "default"
-):
-    """Save Or Update Thread.
-
-        Args:
-            session_maker: Description of session_maker.
-            thread_id: Description of thread_id.
-            user_message: Description of user_message.
-            assistant_message: Description of assistant_message.
-            user_id: Description of user_id.
-        """
-
-    async with session_maker() as session:
-        stmt = select(Thread).where(Thread.thread_id == thread_id)
-        result = await session.execute(stmt)
-        thread = result.scalar_one_or_none()
-
-        if thread is None:
-            if user_message:
-                title = user_message[:50] if len(user_message) > 50 else user_message
-            else:
-                title = "New Conversation"
-
-            last_msg = assistant_message[:200] if len(assistant_message) > 200 else assistant_message
-            if not last_msg:
-                last_msg = "(no text)"
-
-            thread = Thread(
-                thread_id=thread_id,
-                user_id=user_id,
-                title=title,
-                last_message=last_msg,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
-            )
-            session.add(thread)
-        else:
-            last_msg = assistant_message[:200] if len(assistant_message) > 200 else assistant_message
-            if not last_msg:
-                last_msg = "(no text)"
-            thread.last_message = last_msg
-            thread.updated_at = datetime.utcnow()
-
-        await session.commit()
 
 
 def parse_content_blocks(content_data: list) -> List[ContentBlock]:
@@ -192,20 +139,6 @@ async def websocket_chat(websocket: WebSocket):
                         "timestamp": timestamp.isoformat()
                     }
 
-                    user_message_text = extract_text_from_content(content_blocks)
-                    assistant_message_text = extract_text_from_content(content_blocks_response)
-
-                    if hasattr(websocket.app.state, 'db_session_maker'):
-                        try:
-                            await save_or_update_thread(
-                                websocket.app.state.db_session_maker,
-                                thread_id,
-                                user_message_text,
-                                assistant_message_text
-                            )
-                        except Exception:
-                            pass
-
                     await websocket.send_json({
                         "type": "response",
                         "thread_id": thread_id,
@@ -268,19 +201,6 @@ async def websocket_chat(websocket: WebSocket):
                                                     "type": "token",
                                                     "content": text
                                                 })
-
-                    user_message_text = extract_text_from_content(content_blocks)
-
-                    if hasattr(websocket.app.state, 'db_session_maker') and accumulated_content:
-                        try:
-                            await save_or_update_thread(
-                                websocket.app.state.db_session_maker,
-                                thread_id,
-                                user_message_text,
-                                accumulated_content
-                            )
-                        except Exception:
-                            pass
 
                     await websocket.send_json({"type": "done"})
 

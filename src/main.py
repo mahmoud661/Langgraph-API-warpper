@@ -10,9 +10,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from src.api.routes import chat, chat_websocket  # noqa: E402
-from src.domain.services.chat_service import ChatService  # noqa: E402
-from src.infra.database.connection import engine  # noqa: E402
-from src.infra.models.thread import Base as ThreadBase  # noqa: E402
+from src.app.services.chat_service import ChatService  # noqa: E402
 from src.workflow.chat_runner import create_chat_runner  # noqa: E402
 
 
@@ -23,9 +21,6 @@ async def lifespan(app: FastAPI):
     Args:
         app: Description of app.
     """
-    async with engine.begin() as conn:
-        await conn.run_sync(ThreadBase.metadata.create_all)
-
     chat_runner = await create_chat_runner()
     app.state.chat_runner = chat_runner
 
