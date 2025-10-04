@@ -7,7 +7,7 @@ After reviewing the codebase (`ChatRunner` and WebSocket routes), I've identifie
 ### 🔴 **Critical Issues Found**
 
 #### **1. ChatRunner Class (`src/workflow/chat_runner.py`)**
-- **❌ Duplicate Logic**: `unified_stream()` and `resume_interrupt()` have 95% identical processing logic
+- **❌ Duplicate Logic**: `stream()` and `resume_interrupt()` have 95% identical processing logic
 - **❌ Complex Error Handling**: Scattered try-catch blocks with inconsistent error formats  
 - **❌ Type Safety Issues**: Unsafe attribute access with `getattr()` and `hasattr()`
 - **❌ Debug Code Pollution**: Production code mixed with debug statements removed
@@ -27,7 +27,7 @@ After reviewing the codebase (`ChatRunner` and WebSocket routes), I've identifie
 
 ```python
 # ❌ PROBLEM 1: Massive code duplication between methods
-async def unified_stream(...):
+async def stream(...):
     # 50+ lines of identical processing logic
     if event_type == "messages":
         # Same logic...
@@ -158,7 +158,7 @@ async def stream(
     thread_id: Optional[str] = None,
     resume_data: Optional[dict] = None
 ) -> AsyncIterator[StreamEvent]:
-    """Unified streaming method replacing unified_stream + resume_interrupt."""
+    """Unified streaming method replacing stream + resume_interrupt."""
     
     if thread_id is None:
         thread_id = str(uuid.uuid4())
@@ -282,7 +282,7 @@ class InteractiveQuestionTool(InteractiveTool):
 ### **Week 2: ChatRunner Refactoring** 
 - [ ] Implement new unified `stream()` method
 - [ ] Add proper error handling and validation
-- [ ] Deprecate old methods (`unified_stream`, `resume_interrupt`)
+- [ ] Deprecate old methods (`stream`, `resume_interrupt`)
 - [ ] Ensure backward compatibility during transition
 - [ ] Performance testing and optimization
 

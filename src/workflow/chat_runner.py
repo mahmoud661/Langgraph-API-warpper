@@ -2,13 +2,13 @@
 
 import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any, cast
 
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.types import Command
+from langgraph.types import Command, StreamMode
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
@@ -52,27 +52,7 @@ class ChatRunner:
 
         return {"thread_id": thread_id, "messages": result.get("messages", []), "status": "completed"}
 
-    async def stream(self, messages: list[BaseMessage], thread_id: str | None = None, stream_mode: str = "messages") -> AsyncIterator[dict[str, Any]]:
-        """Stream - Legacy single mode streaming.
-
-        Args:
-            messages: Description of messages.
-            thread_id: Description of thread_id.
-            stream_mode: Description of stream_mode.
-
-        Returns:
-            Description of return value.
-        """
-
-        if thread_id is None:
-            thread_id = str(uuid.uuid4())
-
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-
-        async for chunk in self.graph.astream(cast(AgentState, {"messages": messages}), config=config, stream_mode="messages"):
-            yield {"thread_id": thread_id, "chunk": chunk}
-
-    async def unified_stream(self, messages: list[BaseMessage], thread_id: str | None = None) -> AsyncIterator[dict[str, Any]]:
+    async def stream(self, messages: list[BaseMessage], thread_id: str | None = None, stream_mode: StreamMode | Sequence[StreamMode] = ["messages", "values", "custom"]) -> AsyncIterator[dict[str, Any]]:
         """Unified Stream - Multi-mode streaming for AI tokens + interrupts.
         
         This method implements the unified streaming approach from our research:
@@ -98,7 +78,7 @@ class ChatRunner:
             async for event_type, chunk in self.graph.astream(
                 cast(AgentState, {"messages": messages}),
                 config=config,
-                stream_mode=["messages", "values", "custom"]
+                stream_mode=stream_mode
             ):
 
                 # Process different event types
@@ -189,7 +169,7 @@ class ChatRunner:
                 config=config,
                 stream_mode=["messages", "values", "custom"]
             ):
-                # Same processing as unified_stream
+                # Same processing as stream
                 if event_type == "messages":
                     if isinstance(chunk, (list, tuple)) and len(chunk) >= 2:
                         token, metadata = chunk

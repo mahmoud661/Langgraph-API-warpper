@@ -184,7 +184,7 @@ async def handle_send_message(websocket: WebSocket, request_data: dict, runner, 
         })
 
         # Start unified streaming
-        async for event in runner.unified_stream(
+        async for event in runner.stream(
             messages=[human_message],
             thread_id=thread_id
         ):
