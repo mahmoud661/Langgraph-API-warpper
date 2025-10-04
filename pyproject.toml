@@ -22,21 +22,6 @@ dependencies = [
     "ruff>=0.13.3",
 ]
 
-[tool.black]
-line-length = 200
-target-version = ['py311']
-
-[tool.isort]
-profile = "black"
-line_length = 200
-
-[tool.flake8]
-max-line-length = 200
-extend-ignore = ["E203", "W503"]
-
-[tool.pylint.format]
-max-line-length = 200
-
 [dependency-groups]
 dev = [
     "ruff>=0.13.3",
