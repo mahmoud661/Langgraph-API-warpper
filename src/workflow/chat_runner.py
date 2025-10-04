@@ -5,8 +5,7 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, cast
 
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command, StreamMode
 from psycopg import AsyncConnection
@@ -14,246 +13,97 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from src.workflow.graph import AgentState, create_workflow
+from src.workflow.utils.create_config import create_config
+from src.workflow.utils.create_error_event import create_error_event
+from src.workflow.utils.process_message_event import process_message_event
+from src.workflow.utils.process_values_event import process_values_event
 
 
 class ChatRunner:
-    """ChatRunner class."""
+    """ChatRunner class for managing conversational AI workflows with interrupts."""
 
     def __init__(self, checkpointer: AsyncPostgresSaver):
-        """Init  .
-
-        Args:
-            checkpointer: Description of checkpointer.
-        """
-
+        """Initialize ChatRunner with checkpointer."""
         self.checkpointer = checkpointer
-
         workflow = create_workflow()
-        # Compile with checkpointer - interrupts will happen inside tools via interrupt() calls
         self.graph = workflow.compile(checkpointer=checkpointer)
 
     async def run(self, messages: list[BaseMessage], thread_id: str | None = None) -> dict[str, Any]:
-        """Run.
-
-        Args:
-            messages: Description of messages.
-            thread_id: Description of thread_id.
-
-        Returns:
-            Description of return value.
-        """
-
-        if thread_id is None:
-            thread_id = str(uuid.uuid4())
-
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+        """Run workflow to completion without streaming."""
+        thread_id = thread_id or str(uuid.uuid4())
+        config = create_config(thread_id)
 
         result = await self.graph.ainvoke(cast(AgentState, {"messages": messages}), config=config)
 
         return {"thread_id": thread_id, "messages": result.get("messages", []), "status": "completed"}
 
-    async def stream(self, messages: list[BaseMessage], thread_id: str | None = None, stream_mode: StreamMode | Sequence[StreamMode] = ["messages", "values", "custom"]) -> AsyncIterator[dict[str, Any]]:
-        """Unified Stream - Multi-mode streaming for AI tokens + interrupts.
-        
-        This method implements the unified streaming approach from our research:
-        - Uses multi-mode streaming ["messages", "values", "custom"] 
-        - Captures AI tokens via "messages" mode
-        - Detects interrupts via "values" mode (__interrupt__ key)
-        - Streams questions via "custom" mode (StreamWriter)
-        
-        Args:
-            messages: Conversation messages
-            thread_id: Thread identifier for conversation persistence
-            
-        Yields:
-            Unified event dictionaries with type-specific data
-        """
-        if thread_id is None:
-            thread_id = str(uuid.uuid4())
-
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    async def stream(self, messages: list[BaseMessage], thread_id: str | None = None, stream_mode: StreamMode | Sequence[StreamMode] | None = None) -> AsyncIterator[dict[str, Any]]:
+        """Unified multi-mode streaming for AI tokens, interrupts, and questions."""
+        thread_id = thread_id or str(uuid.uuid4())
+        config = create_config(thread_id)
+        if stream_mode is None:
+            stream_mode = ["messages", "values", "custom"]
 
         try:
-
-            async for event_type, chunk in self.graph.astream(
-                cast(AgentState, {"messages": messages}),
-                config=config,
-                stream_mode=stream_mode
-            ):
-
-                # Process different event types
+            async for event_type, chunk in self.graph.astream(cast(AgentState, {"messages": messages}), config=config, stream_mode=stream_mode):
+                # Process message events (AI tokens)
                 if event_type == "messages":
-                    # AI token streaming
-                    if isinstance(chunk, (list, tuple)) and len(chunk) >= 2:
-                        token, metadata = chunk
-                        if hasattr(token, 'content') and getattr(token, 'content', None):
-                            yield {
-                                "type": "ai_token",
-                                "content": str(token.content),
-                                "thread_id": thread_id,
-                                "metadata": {
-                                    "node": metadata.get("langgraph_node") if hasattr(metadata, 'get') else None,
-                                    "step": metadata.get("langgraph_step") if hasattr(metadata, 'get') else None,
-                                    "tags": metadata.get("tags", []) if hasattr(metadata, 'get') else []
-                                }
-                            }
+                    event = process_message_event(chunk, thread_id)
+                    if event:
+                        yield event
 
+                # Process values events (interrupts and state)
                 elif event_type == "values":
-                    # State updates including interrupt detection
-                    if isinstance(chunk, dict) and "__interrupt__" in chunk:
-                        interrupts = chunk["__interrupt__"]
-                        if isinstance(interrupts, (list, tuple)):
-                            for interrupt in interrupts:
+                    for event in process_values_event(chunk, thread_id):
+                        yield event
 
-                                interrupt_data = {
-                                    "type": "interrupt_detected",
-                                    "interrupt_id": getattr(interrupt, 'id', str(interrupt)),
-                                    "thread_id": thread_id,
-                                    "question_data": getattr(interrupt, 'value', interrupt),
-                                    "resumable": getattr(interrupt, 'resumable', True),
-                                    "namespace": getattr(interrupt, 'ns', [])
-                                }
-                                yield interrupt_data
-
-                    # Also yield regular state updates for debugging
-                    if isinstance(chunk, dict):
-                        yield {
-                            "type": "state_update",
-                            "thread_id": thread_id,
-                            "state_keys": list(chunk.keys()),
-                            "has_interrupt": "__interrupt__" in chunk
-                        }
-
+                # Process custom events (questions)
                 elif event_type == "custom":
-                    # Interactive questions streamed via StreamWriter
-                    yield {
-                        "type": "question_token",
-                        "content": chunk,
-                        "thread_id": thread_id
-                    }
+                    yield {"type": "question_token", "content": chunk, "thread_id": thread_id}
 
         except Exception as e:
-            # Error handling for streaming
-            yield {
-                "type": "error",
-                "thread_id": thread_id,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
+            yield create_error_event(thread_id, e)
 
     async def resume_interrupt(self, thread_id: str, interrupt_id: str | None = None, user_response: Any = None) -> AsyncIterator[dict[str, Any]]:
-        """Resume execution after interrupt with user response.
-        
-        Args:
-            thread_id: Thread identifier
-            interrupt_id: Specific interrupt to resume (optional)
-            user_response: User's response to the interrupt
-            
-        Yields:
-            Continuation of unified streaming events
-        """
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+        """Resume execution after interrupt with user response."""
+        config = create_config(thread_id)
 
         # Prepare resume command
-        if interrupt_id and isinstance(user_response, dict):
-            # Resume specific interrupt with complex response
-            command = Command(resume={interrupt_id: user_response})
-        else:
-            # Resume with simple response (most common case)
-            command = Command(resume=user_response)
+        command = Command(resume={interrupt_id: user_response}) if interrupt_id and isinstance(user_response, dict) else Command(resume=user_response)
 
         try:
-            # Resume streaming with multi-mode
-            async for event_type, chunk in self.graph.astream(
-                command,
-                config=config,
-                stream_mode=["messages", "values", "custom"]
-            ):
-                # Same processing as stream
+            async for event_type, chunk in self.graph.astream(command, config=config, stream_mode=["messages", "values", "custom"]):
                 if event_type == "messages":
-                    if isinstance(chunk, (list, tuple)) and len(chunk) >= 2:
-                        token, metadata = chunk
-                        if hasattr(token, 'content') and getattr(token, 'content', None):
-                            yield {
-                                "type": "ai_token",
-                                "content": str(token.content),
-                                "thread_id": thread_id,
-                                "metadata": {
-                                    "node": metadata.get("langgraph_node") if hasattr(metadata, 'get') else None,
-                                    "step": metadata.get("langgraph_step") if hasattr(metadata, 'get') else None
-                                },
-                                "resumed": True
-                            }
+                    event = process_message_event(chunk, thread_id, resumed=True)
+                    if event:
+                        yield event
 
                 elif event_type == "values":
-                    if isinstance(chunk, dict) and "__interrupt__" in chunk:
-                        interrupts = chunk["__interrupt__"]
-                        if isinstance(interrupts, (list, tuple)):
-                            for interrupt in interrupts:
-                                yield {
-                                    "type": "interrupt_detected",
-                                    "interrupt_id": getattr(interrupt, 'id', str(interrupt)),
-                                    "thread_id": thread_id,
-                                    "question_data": getattr(interrupt, 'value', interrupt),
-                                    "resumable": getattr(interrupt, 'resumable', True)
-                                }
+                    for event in process_values_event(chunk, thread_id):
+                        yield event
 
                 elif event_type == "custom":
-                    yield {
-                        "type": "question_token",
-                        "content": chunk,
-                        "thread_id": thread_id
-                    }
+                    yield {"type": "question_token", "content": chunk, "thread_id": thread_id}
 
         except Exception as e:
-            yield {
-                "type": "error",
-                "thread_id": thread_id,
-                "error": f"Resume failed: {str(e)}",
-                "error_type": type(e).__name__
-            }
+            yield create_error_event(thread_id, e, "Resume failed")
 
     async def get_interrupts(self, thread_id: str) -> list[dict[str, Any]]:
-        """Get current interrupts for a thread.
-        
-        Args:
-            thread_id: Thread identifier
-            
-        Returns:
-            List of interrupt information dictionaries
-        """
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+        """Get current interrupts for a thread."""
+        config = create_config(thread_id)
 
         try:
             state = await self.graph.aget_state(config)
-
-            interrupts = []
-            for interrupt in state.interrupts:
-                interrupts.append({
-                    "interrupt_id": interrupt.id,
-                    "question_data": interrupt.value,
-                    "resumable": getattr(interrupt, 'resumable', True),
-                    "namespace": getattr(interrupt, 'ns', []),
-                    "created_at": "now"  # You might want to add timestamp tracking
-                })
-
-            return interrupts
-
+            return [
+                {"interrupt_id": interrupt.id, "question_data": interrupt.value, "resumable": getattr(interrupt, "resumable", True), "namespace": getattr(interrupt, "ns", []), "created_at": "now"}
+                for interrupt in state.interrupts
+            ]
         except Exception as e:
             return [{"error": f"Failed to get interrupts: {str(e)}"}]
 
     async def get_history(self, thread_id: str, limit: int = 10) -> list[dict[str, Any]]:
-        """Get History.
-
-        Args:
-            thread_id: Description of thread_id.
-            limit: Description of limit.
-
-        Returns:
-            Description of return value.
-        """
-
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+        """Get conversation history with checkpoints."""
+        config = create_config(thread_id)
         history = []
 
         count = 0
@@ -267,28 +117,16 @@ class ChatRunner:
         return history
 
     async def retry_message(self, thread_id: str, checkpoint_id: str | None = None) -> dict[str, Any]:
-        """Retry Message.
-
-        Args:
-            thread_id: Description of thread_id.
-            checkpoint_id: Description of checkpoint_id.
-
-        Returns:
-            Description of return value.
-        """
-
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-        if checkpoint_id:
-            config["configurable"]["checkpoint_id"] = checkpoint_id
-
+        """Retry last AI message from checkpoint."""
+        config = create_config(thread_id, checkpoint_id)
         state = await self.graph.aget_state(config)
 
         messages = state.values.get("messages", [])
         if not messages:
             return {"thread_id": thread_id, "status": "error", "error": "No messages in history to retry"}
 
-        last_message = messages[-1]
-        if isinstance(last_message, AIMessage):
+        # Remove last AI message if present
+        if isinstance(messages[-1], AIMessage):
             messages = messages[:-1]
 
         result = await self.graph.ainvoke(cast(AgentState, {"messages": messages}), config=config)
@@ -296,89 +134,41 @@ class ChatRunner:
         return {"thread_id": thread_id, "messages": result.get("messages", []), "status": "completed"}
 
     async def has_pending_interrupts(self, thread_id: str) -> bool:
-        """Check if thread has pending interrupts.
-        
-        Args:
-            thread_id: Thread identifier
-            
-        Returns:
-            True if there are pending interrupts, False otherwise
-        """
+        """Check if thread has pending interrupts."""
         interrupts = await self.get_interrupts(thread_id)
-        return len(interrupts) > 0 and not any("error" in interrupt for interrupt in interrupts)
+        return len(interrupts) > 0 and not any("error" in i for i in interrupts)
 
     async def cancel_interrupt(self, thread_id: str, interrupt_id: str | None = None) -> dict[str, Any]:
-        """Cancel a pending interrupt and clean up the thread state.
-        
-        Args:
-            thread_id: Thread identifier
-            interrupt_id: Specific interrupt to cancel (optional)
-            
-        Returns:
-            Status of cancellation operation
-        """
+        """Cancel a pending interrupt and clean up thread state."""
         try:
-            config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-
-            # Get current state to check for interrupts
+            config = create_config(thread_id)
             state = await self.graph.aget_state(config)
 
             if not state.next:
-                return {
-                    "thread_id": thread_id,
-                    "status": "no_interrupts",
-                    "message": "No pending interrupts to cancel"
-                }
+                return {"thread_id": thread_id, "status": "no_interrupts", "message": "No pending interrupts to cancel"}
 
-            # Update the state to remove the interrupt and continue with a cancellation message
-            # We'll add a system message indicating the operation was cancelled
+            # Add cancellation message and update state
             current_messages = state.values.get("messages", [])
+            cancellation_msg = SystemMessage(content="The previous operation was cancelled by the user.")
 
-            # Add a cancellation message to the conversation
-            from langchain_core.messages import SystemMessage
-            cancellation_msg = SystemMessage(
-                content="The previous operation was cancelled by the user."
-            )
+            await self.graph.aupdate_state(config, {"messages": current_messages + [cancellation_msg]})
 
-            # Update state by adding the cancellation message and clearing interrupts
-            new_state = {
-                "messages": current_messages + [cancellation_msg]
-            }
-
-            # Update the graph state - this should clear any pending interrupts
-            await self.graph.aupdate_state(config, new_state)
-
-            return {
-                "thread_id": thread_id,
-                "interrupt_id": interrupt_id,
-                "status": "cancelled",
-                "message": "Interrupt cancelled successfully"
-            }
+            return {"thread_id": thread_id, "interrupt_id": interrupt_id, "status": "cancelled", "message": "Interrupt cancelled successfully"}
 
         except Exception as e:
-            return {
-                "thread_id": thread_id,
-                "interrupt_id": interrupt_id,
-                "status": "error",
-                "error": f"Failed to cancel interrupt: {str(e)}"
-            }
+            return {"thread_id": thread_id, "interrupt_id": interrupt_id, "status": "error", "error": f"Failed to cancel interrupt: {str(e)}"}
+
+
+# ============================================================================
+# Factory Function
+# ============================================================================
 
 
 async def create_chat_runner() -> ChatRunner:
-    """Create Chat Runner.
-
-
-    Returns:
-        Description of return value.
-    """
-
+    """Create and initialize ChatRunner with database connection."""
     db_url = os.getenv("DATABASE_URL", "")
 
-    connection_kwargs = {
-        "autocommit": True,
-        "prepare_threshold": 0,
-        "row_factory": dict_row,
-    }
+    connection_kwargs = {"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row}
 
     pool: AsyncConnectionPool[AsyncConnection[Any]] = AsyncConnectionPool(conninfo=db_url, kwargs=connection_kwargs, min_size=2, max_size=10, max_idle=300, timeout=30, open=False)
 
