@@ -78,27 +78,12 @@ async def send_event(websocket: WebSocket, event_type: str, data: dict):
         # Merge data into event
         event.update(data)
 
-        # Debug: Print the raw data to see what contains datetime
-        if event_type == "interrupt_detected":
-            print(f"DEBUG RAW DATA: {data}")
-            print(f"DEBUG DATA TYPES: {[(k, type(v), v) for k, v in data.items()]}")
-
-            # Check nested objects
-            for k, v in data.items():
-                if hasattr(v, '__dict__'):
-                    print(f"DEBUG NESTED {k}: {vars(v)}")
-                elif isinstance(v, dict):
-                    print(f"DEBUG DICT {k}: {[(kk, type(vv), vv) for kk, vv in v.items()]}")
-
         # Serialize the entire event object to handle any nested datetime objects
         serialized_event = serialize_for_json(event)
 
         await websocket.send_text(json.dumps(serialized_event))
     except Exception as e:
         print(f"Failed to send event {event_type}: {e}")
-        # Also print the full traceback for debugging
-        import traceback
-        traceback.print_exc()
 
 
 @router.websocket("/unified-chat")

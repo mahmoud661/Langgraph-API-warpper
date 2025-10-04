@@ -240,6 +240,10 @@ async def test_cancel_interrupt():
         await websocket.send(json.dumps(message))
         print("📤 Sent: Can you ask me a question that I can cancel?")
 
+        cancelled = False
+        followup_sent = False
+        message_count = 0
+
         while True:
             try:
                 response = await websocket.recv()
@@ -269,14 +273,37 @@ async def test_cancel_interrupt():
 
                 elif event['event'] == 'interrupt_cancelled':
                     print(f"🚫 Interrupt cancelled: {event['message']}")
+                    cancelled = True
+
+                    # Send a follow-up message to test thread behavior after cancellation
+                    if not followup_sent:
+                        print("📤 Sending follow-up message after cancellation...")
+                        followup_message = {
+                            "action": "send_message",
+                            "content": [
+                                {"type": "text", "data": "Now that we cancelled, can you just say hello?"}
+                            ]
+                        }
+                        await websocket.send(json.dumps(followup_message))
+                        print("📤 Sent follow-up: Now that we cancelled, can you just say hello?")
+                        followup_sent = True
 
                 elif event['event'] == 'message_complete':
-                    print("\n✅ Conversation completed after cancellation")
+                    message_count += 1
+                    print(f"\n✅ Message #{message_count} completed")
+
+                    # If we've completed messages after cancellation, we're done
+                    if cancelled and followup_sent and message_count >= 1:
+                        print("🎯 Test complete - showing thread behavior after cancellation")
+                        break
+
+                elif event['event'] == 'connection_closed':
+                    print("\n🔌 Connection closed by server")
                     break
 
                 elif event['event'] == 'error':
                     print(f"\n❌ Error: {event['message']}")
-                    break
+                    # Don't break on error, continue to see what happens
 
             except websockets.exceptions.ConnectionClosed:
                 print("\n🔌 Connection closed")

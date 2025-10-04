@@ -94,24 +94,12 @@ class ChatRunner:
         config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
         try:
-            print(f"DEBUG RUNNER: Starting stream for thread {thread_id}")
-            print(f"DEBUG RUNNER: Input messages: {[msg.content for msg in messages]}")
 
             async for event_type, chunk in self.graph.astream(
                 cast(AgentState, {"messages": messages}),
                 config=config,
                 stream_mode=["messages", "values", "custom"]
             ):
-                print(f"DEBUG RUNNER: Event type: {event_type}")
-                print(f"DEBUG RUNNER: Chunk type: {type(chunk)}")
-                print(f"DEBUG RUNNER: Chunk content: {chunk}")
-
-                # Print state information when we get values events
-                if event_type == "values":
-                    print(f"DEBUG STATE: Full state = {chunk}")
-                    if isinstance(chunk, dict):
-                        for key, value in chunk.items():
-                            print(f"DEBUG STATE: {key} = {type(value)} -> {value}")
 
                 # Process different event types
                 if event_type == "messages":
@@ -136,12 +124,6 @@ class ChatRunner:
                         interrupts = chunk["__interrupt__"]
                         if isinstance(interrupts, (list, tuple)):
                             for interrupt in interrupts:
-                                # Debug: Check interrupt object for datetime fields
-                                print(f"DEBUG INTERRUPT TYPE: {type(interrupt)}")
-                                if hasattr(interrupt, '__dict__'):
-                                    print(f"DEBUG INTERRUPT DICT: {vars(interrupt)}")
-                                    for k, v in vars(interrupt).items():
-                                        print(f"DEBUG INTERRUPT FIELD {k}: {type(v)} = {v}")
 
                                 interrupt_data = {
                                     "type": "interrupt_detected",
@@ -151,7 +133,6 @@ class ChatRunner:
                                     "resumable": getattr(interrupt, 'resumable', True),
                                     "namespace": getattr(interrupt, 'ns', [])
                                 }
-                                print(f"DEBUG INTERRUPT DATA: {interrupt_data}")
                                 yield interrupt_data
 
                     # Also yield regular state updates for debugging
