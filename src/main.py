@@ -9,12 +9,9 @@ from contextlib import asynccontextmanager  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-from src.api.routes import chat, chat_websocket, websocket  # noqa: E402
-from src.domain.services.chat_service import ChatService  # noqa: E402
-from src.infra.database.connection import AsyncSessionLocal, engine  # noqa: E402
-from src.infra.models.thread import Base as ThreadBase  # noqa: E402
+from src.api.routes import chat, chat_websocket  # noqa: E402
+from src.app.services.chat_service import ChatService  # noqa: E402
 from src.workflow.chat_runner import create_chat_runner  # noqa: E402
-from src.workflow.runner import create_workflow_runner  # noqa: E402
 
 
 @asynccontextmanager
@@ -24,26 +21,13 @@ async def lifespan(app: FastAPI):
     Args:
         app: Description of app.
     """
-    async with engine.begin() as conn:
-        await conn.run_sync(ThreadBase.metadata.create_all)
-
-    app.state.db_session_maker = AsyncSessionLocal
-
-    workflow_runner = await create_workflow_runner()
-    app.state.workflow_runner = workflow_runner
-
     chat_runner = await create_chat_runner()
     app.state.chat_runner = chat_runner
 
-    chat_service = ChatService(chat_runner, AsyncSessionLocal)
+    chat_service = ChatService(chat_runner)
     app.state.chat_service = chat_service
 
     yield
-
-    if hasattr(workflow_runner.checkpointer, "close"):
-        await workflow_runner.checkpointer.close()  # type: ignore
-    elif hasattr(workflow_runner.checkpointer, "pool"):
-        await workflow_runner.checkpointer.pool.close()  # type: ignore
 
     if hasattr(chat_runner.checkpointer, "close"):
         await chat_runner.checkpointer.close()  # type: ignore
@@ -66,7 +50,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(websocket.router)
 app.include_router(chat.router)
 app.include_router(chat_websocket.router)
 
