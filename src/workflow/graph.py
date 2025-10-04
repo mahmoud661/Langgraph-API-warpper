@@ -10,7 +10,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langgraph.types import RetryPolicy
 
-from src.workflow.tools import calculator_tool, search_tool
+from src.workflow.tools import calculator_tool, enhanced_search_tool, interactive_question_tool, preference_selector_tool
 
 
 class AgentState(TypedDict):
@@ -30,8 +30,8 @@ def call_llm(state: AgentState) -> dict:
     Returns:
         Dictionary containing the LLM response message.
     """
-    # Define available tools
-    available_tools = [calculator_tool, search_tool]
+    # Define available tools - including new interactive tools
+    available_tools = [calculator_tool, enhanced_search_tool, interactive_question_tool, preference_selector_tool]
 
     # Initialize and configure the LLM
     llm = init_chat_model(
@@ -76,8 +76,8 @@ def create_workflow():
     Returns:
         StateGraph: Compiled workflow graph ready for execution.
     """
-    # Define available tools for the ToolNode
-    available_tools = [calculator_tool, search_tool]
+    # Define available tools for the ToolNode - including new interactive tools
+    available_tools = [calculator_tool, enhanced_search_tool, interactive_question_tool, preference_selector_tool]
 
     # Create the workflow graph
     workflow = StateGraph(AgentState)

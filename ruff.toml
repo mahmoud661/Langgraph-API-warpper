@@ -1,4 +1,3 @@
-line-length = 200
 target-version = "py311"
 
 [lint]
@@ -36,6 +35,6 @@ max-statements = 60
 
 [format]
 quote-style = "double"
-indent-style = "space" 
+indent-style = "space"
 line-ending = "auto"
-skip-magic-trailing-comma = true
+skip-magic-trailing-comma = false
