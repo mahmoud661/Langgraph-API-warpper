@@ -69,7 +69,7 @@ async def root():
             "stream_workflow": "/workflow/stream",
             "websocket_workflow": "/ws/workflow",
             "websocket_chat": "/ws/chat",
-            "chat_websocket_chat": "/ws/unified-chat",
+            "chat_websocket_chat": "/ws/chat-stream",
             "websocket_stats": "/ws/stats",
             "get_state": "/workflow/state/{thread_id}",
             "get_history": "/workflow/history/{thread_id}",

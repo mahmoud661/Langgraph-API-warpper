@@ -14,7 +14,7 @@ import websockets
 async def test_basic_conversation():
     """Test basic conversation flow."""
 
-    uri = "ws://localhost:8000/ws/unified-chat"
+    uri = "ws://localhost:8000/ws/chat-stream"
 
     async with websockets.connect(uri) as websocket:
         print("🔗 Connected to unified chat system")
@@ -29,7 +29,7 @@ async def test_basic_conversation():
             "action": "send_message",
             "content": [
                 {"type": "text", "data": "Hello! Can you help me with a math problem?"}
-            ]
+            ],
         }
 
         await websocket.send(json.dumps(message))
@@ -41,14 +41,14 @@ async def test_basic_conversation():
                 response = await websocket.recv()
                 event = json.loads(response)
 
-                if event['event'] == 'ai_token':
+                if event["event"] == "ai_token":
                     print(f"🤖 {event['content']}", end="", flush=True)
 
-                elif event['event'] == 'message_complete':
+                elif event["event"] == "message_complete":
                     print("\n✅ Message completed")
                     break
 
-                elif event['event'] == 'error':
+                elif event["event"] == "error":
                     print(f"❌ Error: {event['message']}")
                     break
 
@@ -60,7 +60,7 @@ async def test_basic_conversation():
 async def test_interactive_question():
     """Test interactive question with user choice."""
 
-    uri = "ws://localhost:8000/ws/unified-chat"
+    uri = "ws://localhost:8000/ws/chat-stream"
 
     async with websockets.connect(uri) as websocket:
         print("🔗 Connected for interactive test")
@@ -72,8 +72,11 @@ async def test_interactive_question():
         message = {
             "action": "send_message",
             "content": [
-                {"type": "text", "data": "Call the preference_selector_tool function with category='search engine' and items=['Google', 'Bing', 'DuckDuckGo']. You must use this tool function."}
-            ]
+                {
+                    "type": "text",
+                    "data": "Call the preference_selector_tool function with category='search engine' and items=['Google', 'Bing', 'DuckDuckGo']. You must use this tool function.",
+                }
+            ],
         }
 
         await websocket.send(json.dumps(message))
@@ -88,21 +91,23 @@ async def test_interactive_question():
                 event = json.loads(response)
                 print(f"\n🔍 DEBUG Event: {event['event']}")  # Debug line
 
-                if event['event'] == 'ai_token':
+                if event["event"] == "ai_token":
                     print(f"🤖 {event['content']}", end="", flush=True)
 
-                elif event['event'] == 'question_token':
+                elif event["event"] == "question_token":
                     print(f"❓ {event['content']}", end="", flush=True)
 
-                elif event['event'] == 'interrupt_detected':
-                    interrupt_id = event['interrupt_id']
-                    question_data = event['question_data']
+                elif event["event"] == "interrupt_detected":
+                    interrupt_id = event["interrupt_id"]
+                    question_data = event["question_data"]
                     print("\n🛑 Interrupt detected!")
-                    print(f"📋 Question: {question_data.get('question', 'No question')}")
+                    print(
+                        f"📋 Question: {question_data.get('question', 'No question')}"
+                    )
 
-                    if 'options' in question_data:
+                    if "options" in question_data:
                         print("📝 Options:")
-                        for option in question_data['options']:
+                        for option in question_data["options"]:
                             print(f"  - {option['label']} ({option['value']})")
 
                     # Simulate user choosing Google
@@ -113,17 +118,17 @@ async def test_interactive_question():
                     resume_message = {
                         "action": "resume_interrupt",
                         "interrupt_id": interrupt_id,
-                        "user_response": user_choice
+                        "user_response": user_choice,
                     }
 
                     await websocket.send(json.dumps(resume_message))
                     print("📤 Sent resume with user choice")
 
-                elif event['event'] == 'message_complete':
+                elif event["event"] == "message_complete":
                     print("\n✅ Interactive conversation completed")
                     break
 
-                elif event['event'] == 'error':
+                elif event["event"] == "error":
                     print(f"\n❌ Error: {event['message']}")
                     break
 
@@ -135,7 +140,7 @@ async def test_interactive_question():
 async def test_multiple_interrupts():
     """Test handling multiple interrupts in sequence."""
 
-    uri = "ws://localhost:8000/ws/unified-chat"
+    uri = "ws://localhost:8000/ws/chat-stream"
 
     async with websockets.connect(uri) as websocket:
         print("🔗 Connected for multiple interrupts test")
@@ -147,8 +152,11 @@ async def test_multiple_interrupts():
         message = {
             "action": "send_message",
             "content": [
-                {"type": "text", "data": "Please use the preference_selector_tool to ask me which search engine I prefer, then use the interactive_question_tool to ask me what I want to search for."}
-            ]
+                {
+                    "type": "text",
+                    "data": "Please use the preference_selector_tool to ask me which search engine I prefer, then use the interactive_question_tool to ask me what I want to search for.",
+                }
+            ],
         }
 
         await websocket.send(json.dumps(message))
@@ -161,31 +169,33 @@ async def test_multiple_interrupts():
                 response = await websocket.recv()
                 event = json.loads(response)
 
-                if event['event'] == 'ai_token':
+                if event["event"] == "ai_token":
                     print(f"🤖 {event['content']}", end="", flush=True)
 
-                elif event['event'] == 'question_token':
+                elif event["event"] == "question_token":
                     print(f"❓ {event['content']}", end="", flush=True)
 
-                elif event['event'] == 'interrupt_detected':
+                elif event["event"] == "interrupt_detected":
                     interrupt_count += 1
-                    interrupt_id = event['interrupt_id']
-                    question_data = event['question_data']
+                    interrupt_id = event["interrupt_id"]
+                    question_data = event["question_data"]
 
                     print(f"\n🛑 Interrupt #{interrupt_count} detected!")
-                    print(f"📋 Question: {question_data.get('question', 'No question')}")
+                    print(
+                        f"📋 Question: {question_data.get('question', 'No question')}"
+                    )
 
                     # Handle different types of interrupts
-                    if question_data.get('type') == 'preference_selection':
+                    if question_data.get("type") == "preference_selection":
                         # Preference selection - choose first option
-                        options = question_data.get('options', [])
+                        options = question_data.get("options", [])
                         if options:
-                            user_choice = options[0]['value']
+                            user_choice = options[0]["value"]
                             print(f"👤 User selects first option: {user_choice}")
                         else:
                             user_choice = "default"
 
-                    elif question_data.get('tool_name'):
+                    elif question_data.get("tool_name"):
                         # Tool approval - approve it
                         user_choice = {"action": "approve"}
                         print("👤 User approves tool execution")
@@ -199,17 +209,19 @@ async def test_multiple_interrupts():
                     resume_message = {
                         "action": "resume_interrupt",
                         "interrupt_id": interrupt_id,
-                        "user_response": user_choice
+                        "user_response": user_choice,
                     }
 
                     await websocket.send(json.dumps(resume_message))
                     print("📤 Resumed interrupt")
 
-                elif event['event'] == 'message_complete':
-                    print(f"\n✅ Complex conversation completed with {interrupt_count} interrupts")
+                elif event["event"] == "message_complete":
+                    print(
+                        f"\n✅ Complex conversation completed with {interrupt_count} interrupts"
+                    )
                     break
 
-                elif event['event'] == 'error':
+                elif event["event"] == "error":
                     print(f"\n❌ Error: {event['message']}")
                     break
 
@@ -221,7 +233,7 @@ async def test_multiple_interrupts():
 async def test_cancel_interrupt():
     """Test cancelling an interrupt."""
 
-    uri = "ws://localhost:8000/ws/unified-chat"
+    uri = "ws://localhost:8000/ws/chat-stream"
 
     async with websockets.connect(uri) as websocket:
         print("🔗 Connected for cancel test")
@@ -234,7 +246,7 @@ async def test_cancel_interrupt():
             "action": "send_message",
             "content": [
                 {"type": "text", "data": "Can you ask me a question that I can cancel?"}
-            ]
+            ],
         }
 
         await websocket.send(json.dumps(message))
@@ -249,29 +261,31 @@ async def test_cancel_interrupt():
                 response = await websocket.recv()
                 event = json.loads(response)
 
-                if event['event'] == 'ai_token':
+                if event["event"] == "ai_token":
                     print(f"🤖 {event['content']}", end="", flush=True)
 
-                elif event['event'] == 'interrupt_detected':
-                    interrupt_id = event['interrupt_id']
-                    thread_id = event['thread_id']
-                    question_data = event['question_data']
+                elif event["event"] == "interrupt_detected":
+                    interrupt_id = event["interrupt_id"]
+                    thread_id = event["thread_id"]
+                    question_data = event["question_data"]
 
                     print("\n🛑 Interrupt detected!")
-                    print(f"📋 Question: {question_data.get('question', 'No question')}")
+                    print(
+                        f"📋 Question: {question_data.get('question', 'No question')}"
+                    )
                     print("👤 User decides to cancel...")
 
                     # Cancel the interrupt
                     cancel_message = {
                         "action": "cancel_interrupt",
                         "interrupt_id": interrupt_id,
-                        "thread_id": thread_id
+                        "thread_id": thread_id,
                     }
 
                     await websocket.send(json.dumps(cancel_message))
                     print("📤 Sent cancel request")
 
-                elif event['event'] == 'interrupt_cancelled':
+                elif event["event"] == "interrupt_cancelled":
                     print(f"🚫 Interrupt cancelled: {event['message']}")
                     cancelled = True
 
@@ -281,27 +295,34 @@ async def test_cancel_interrupt():
                         followup_message = {
                             "action": "send_message",
                             "content": [
-                                {"type": "text", "data": "Now that we cancelled, can you just say hello?"}
-                            ]
+                                {
+                                    "type": "text",
+                                    "data": "Now that we cancelled, can you just say hello?",
+                                }
+                            ],
                         }
                         await websocket.send(json.dumps(followup_message))
-                        print("📤 Sent follow-up: Now that we cancelled, can you just say hello?")
+                        print(
+                            "📤 Sent follow-up: Now that we cancelled, can you just say hello?"
+                        )
                         followup_sent = True
 
-                elif event['event'] == 'message_complete':
+                elif event["event"] == "message_complete":
                     message_count += 1
                     print(f"\n✅ Message #{message_count} completed")
 
                     # If we've completed messages after cancellation, we're done
                     if cancelled and followup_sent and message_count >= 1:
-                        print("🎯 Test complete - showing thread behavior after cancellation")
+                        print(
+                            "🎯 Test complete - showing thread behavior after cancellation"
+                        )
                         break
 
-                elif event['event'] == 'connection_closed':
+                elif event["event"] == "connection_closed":
                     print("\n🔌 Connection closed by server")
                     break
 
-                elif event['event'] == 'error':
+                elif event["event"] == "error":
                     print(f"\n❌ Error: {event['message']}")
                     # Don't break on error, continue to see what happens
 
@@ -344,7 +365,7 @@ if __name__ == "__main__":
 Frontend JavaScript Example:
 
 // Connect to unified WebSocket
-const ws = new WebSocket('ws://localhost:8000/ws/unified-chat');
+const ws = new WebSocket('ws://localhost:8000/ws/chat-stream');
 
 let currentThreadId = null;
 let pendingInterrupts = {};
