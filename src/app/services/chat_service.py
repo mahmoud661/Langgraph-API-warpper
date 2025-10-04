@@ -1,9 +1,15 @@
 """Chat Service module."""
+
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, RemoveMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    RemoveMessage,
+)
 from langchain_core.runnables import RunnableConfig
 
 from src.domain.chat_content import ContentBlock
@@ -35,7 +41,7 @@ class ChatService:
         self,
         content: list[ContentBlock],
         thread_id: str | None = None,
-        user_id: str = "default"
+        user_id: str = "default",
     ) -> dict[str, Any]:
         """
         Send a message and get the response.
@@ -55,11 +61,12 @@ class ChatService:
         if thread_id is None:
             thread_id = str(uuid.uuid4())
 
-        human_message = HumanMessage(content=[block.to_langchain_format() for block in content])
+        human_message = HumanMessage(
+            content=[block.to_langchain_format() for block in content]
+        )
 
         result = await self.chat_runner.run(
-            messages=[human_message],
-            thread_id=thread_id
+            messages=[human_message], thread_id=thread_id
         )
 
         messages = result.get("messages", [])
@@ -74,14 +81,14 @@ class ChatService:
             "thread_id": thread_id,
             "messages": messages,
             "last_message": last_message,
-            "status": "completed"
+            "status": "completed",
         }
 
     async def stream_message(
         self,
         content: list[ContentBlock],
         thread_id: str | None = None,
-        user_id: str = "default"
+        user_id: str = "default",
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Stream message responses as they are generated.
@@ -103,18 +110,15 @@ class ChatService:
         if thread_id is None:
             thread_id = str(uuid.uuid4())
 
-        yield {
-            "type": "metadata",
-            "thread_id": thread_id
-        }
+        yield {"type": "metadata", "thread_id": thread_id}
 
         try:
-            human_message = HumanMessage(content=[block.to_langchain_format() for block in content])
+            human_message = HumanMessage(
+                content=[block.to_langchain_format() for block in content]
+            )
 
             async for event in self.chat_runner.stream(
-                messages=[human_message],
-                thread_id=thread_id,
-                stream_mode="messages"
+                messages=[human_message], thread_id=thread_id, stream_mode="messages"
             ):
                 chunk = event.get("chunk")
 
@@ -127,36 +131,30 @@ class ChatService:
                                 accumulated_content += message_chunk.content
                                 yield {
                                     "type": "token",
-                                    "content": message_chunk.content
+                                    "content": message_chunk.content,
                                 }
                         elif isinstance(message_chunk.content, list):
                             for item in message_chunk.content:
                                 if isinstance(item, str) and item:
                                     accumulated_content += item
-                                    yield {
-                                        "type": "token",
-                                        "content": item
-                                    }
-                                elif isinstance(item, dict) and item.get("type") == "text":
+                                    yield {"type": "token", "content": item}
+                                elif (
+                                    isinstance(item, dict)
+                                    and item.get("type") == "text"
+                                ):
                                     text = item.get("text", "")
                                     if text:
                                         accumulated_content += text
-                                        yield {
-                                            "type": "token",
-                                            "content": text
-                                        }
+                                        yield {"type": "token", "content": text}
 
         except Exception as e:
-            yield {
-                "type": "error",
-                "error": str(e)
-            }
+            yield {"type": "error", "error": str(e)}
 
     async def retry_message(
         self,
         thread_id: str,
         message_id: str,
-        modified_content: list[ContentBlock] | None = None
+        modified_content: list[ContentBlock] | None = None,
     ) -> dict[str, Any]:
         """
         Retry/regenerate a message using message ID-based replacement.
@@ -193,11 +191,10 @@ class ChatService:
         messages_to_update = []
 
         if modified_content:
-
             if isinstance(target_message, HumanMessage):
                 updated_message = HumanMessage(
                     content=[block.to_langchain_format() for block in modified_content],
-                    id=message_id
+                    id=message_id,
                 )
             elif isinstance(target_message, AIMessage):
                 text_content = ""
@@ -205,25 +202,19 @@ class ChatService:
                     if isinstance(block, dict) and block.get("type") == "text":
                         text_content = block.get("text", "")
                         break
-                updated_message = AIMessage(
-                    content=text_content,
-                    id=message_id
-                )
+                updated_message = AIMessage(content=text_content, id=message_id)
             else:
                 raise ValueError(f"Unsupported message type: {type(target_message)}")
 
             messages_to_update.append(updated_message)
 
         messages_to_delete = [
-            RemoveMessage(id=msg.id)
-            for msg in messages[message_index + 1:]
+            RemoveMessage(id=msg.id) for msg in messages[message_index + 1 :]
         ]
         messages_to_update.extend(messages_to_delete)
 
         new_config = await self.chat_runner.graph.aupdate_state(
-            config,
-            values={"messages": messages_to_update},
-            as_node="__start__"
+            config, values={"messages": messages_to_update}, as_node="__start__"
         )
 
         result = await self.chat_runner.graph.ainvoke(None, new_config)
@@ -240,7 +231,7 @@ class ChatService:
             "thread_id": thread_id,
             "messages": result_messages,
             "last_message": last_message,
-            "status": "completed"
+            "status": "completed",
         }
 
     async def get_history(self, thread_id: str) -> dict[str, Any]:
@@ -264,11 +255,7 @@ class ChatService:
         if not messages:
             raise ValueError(f"No history found for thread: {thread_id}")
 
-        return {
-            "thread_id": thread_id,
-            "messages": messages,
-            "state": state
-        }
+        return {"thread_id": thread_id, "messages": messages, "state": state}
 
     async def get_threads(self, user_id: str = "default") -> None:
         """
@@ -282,9 +269,7 @@ class ChatService:
         return []  # type: ignore
 
     async def get_checkpoints(
-        self,
-        thread_id: str,
-        limit: int = 10
+        self, thread_id: str, limit: int = 10
     ) -> list[dict[str, Any]]:
         """
         Get checkpoint history for time-travel debugging and recovery.
@@ -309,12 +294,14 @@ class ChatService:
                 break
 
             checkpoint_data = {
-                "checkpoint_id": checkpoint.config.get("configurable", {}).get("checkpoint_id"),
+                "checkpoint_id": checkpoint.config.get("configurable", {}).get(
+                    "checkpoint_id"
+                ),
                 "messages": checkpoint.values.get("messages", []),
                 "metadata": checkpoint.metadata,
                 "config": checkpoint.config,
                 "next": checkpoint.next,
-                "tasks": checkpoint.tasks
+                "tasks": checkpoint.tasks,
             }
             checkpoints.append(checkpoint_data)
             count += 1
@@ -353,7 +340,7 @@ class ChatService:
                 "messages": messages,
                 "last_message": messages[-1],
                 "status": "already_completed",
-                "resumed_from_checkpoint": False
+                "resumed_from_checkpoint": False,
             }
 
         result = await self.chat_runner.graph.ainvoke(None, config)
@@ -369,5 +356,5 @@ class ChatService:
             "messages": result_messages,
             "last_message": last_message,
             "status": "resumed_and_completed",
-            "resumed_from_checkpoint": True
+            "resumed_from_checkpoint": True,
         }

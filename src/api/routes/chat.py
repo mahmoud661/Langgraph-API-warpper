@@ -7,7 +7,15 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from src.api.dtos.chat import ChatHistoryResponse, ChatResponse, ChatSendRequest, ChatStreamRequest, RetryChatRequest, ThreadInfo, ThreadListResponse
+from src.api.dtos.chat import (
+    ChatHistoryResponse,
+    ChatResponse,
+    ChatSendRequest,
+    ChatStreamRequest,
+    RetryChatRequest,
+    ThreadInfo,
+    ThreadListResponse,
+)
 from src.api.utils.convert_message import convert_langchain_message_to_chat_message
 
 router = APIRouter(prefix="/chat", tags=["chat"])

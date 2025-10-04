@@ -8,7 +8,13 @@ from typing import List, cast
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 
-from src.domain.chat_content import AudioContent, ContentBlock, FileContent, ImageContent, TextContent
+from src.domain.chat_content import (
+    AudioContent,
+    ContentBlock,
+    FileContent,
+    ImageContent,
+    TextContent,
+)
 
 router = APIRouter(prefix="/ws", tags=["websocket-chat"])
 

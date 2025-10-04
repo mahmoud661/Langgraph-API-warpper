@@ -9,7 +9,14 @@ from typing import Dict, List, cast
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langchain_core.messages import HumanMessage
 
-from src.domain.chat_content import AudioContent, ContentBlock, FileContent, ImageContent, TextContent
+from src.domain.chat_content import (
+    AudioContent,
+    ContentBlock,
+    FileContent,
+    ImageContent,
+    TextContent,
+)
+from src.workflow.chat_runner import create_chat_runner
 
 router = APIRouter(prefix="/ws", tags=["unified-websocket-chat"])
 
@@ -51,7 +58,7 @@ def serialize_for_json(obj):
         return None
     elif isinstance(obj, datetime):
         return obj.isoformat()
-    elif hasattr(obj, '__dict__'):
+    elif hasattr(obj, "__dict__"):
         # Convert objects with attributes to dict
         return {k: serialize_for_json(v) for k, v in obj.__dict__.items()}
     elif isinstance(obj, dict):
@@ -64,7 +71,7 @@ def serialize_for_json(obj):
 
 async def send_event(websocket: WebSocket, event_type: str, data: dict):
     """Send structured event to client.
-    
+
     Args:
         websocket: WebSocket connection
         event_type: Type of event (ai_token, interrupt_detected, etc.)
@@ -89,10 +96,10 @@ async def send_event(websocket: WebSocket, event_type: str, data: dict):
 @router.websocket("/unified-chat")
 async def unified_websocket_chat(websocket: WebSocket):
     """Unified WebSocket Chat Endpoint.
-    
+
     Handles both AI streaming responses and interactive human-in-the-loop workflows
     in a single endpoint using multi-mode LangGraph streaming.
-    
+
     Supported Actions:
     - send_message: Send new message and start streaming
     - resume_interrupt: Resume from interrupt with user response
@@ -111,10 +118,14 @@ async def unified_websocket_chat(websocket: WebSocket):
 
     try:
         # Send connection established event
-        await send_event(websocket, "connection_established", {
-            "connection_id": connection_id,
-            "message": "Connected to unified chat system"
-        })
+        await send_event(
+            websocket,
+            "connection_established",
+            {
+                "connection_id": connection_id,
+                "message": "Connected to unified chat system",
+            },
+        )
 
         while True:
             # Receive message from client
@@ -125,39 +136,57 @@ async def unified_websocket_chat(websocket: WebSocket):
             runner = websocket.app.state.chat_runner
 
             if action == "send_message":
-                await handle_send_message(websocket, request_data, runner, connection_id)
+                await handle_send_message(
+                    websocket, request_data, runner, connection_id
+                )
 
             elif action == "resume_interrupt":
-                await handle_resume_interrupt(websocket, request_data, runner, connection_id)
+                await handle_resume_interrupt(
+                    websocket, request_data, runner, connection_id
+                )
 
             elif action == "cancel_interrupt":
                 await handle_cancel_interrupt(websocket, request_data, connection_id)
 
             elif action == "get_interrupts":
-                await handle_get_interrupts(websocket, request_data, runner, connection_id)
+                await handle_get_interrupts(
+                    websocket, request_data, runner, connection_id
+                )
 
             else:
-                await send_event(websocket, "error", {
-                    "message": f"Unknown action: {action}",
-                    "supported_actions": ["send_message", "resume_interrupt", "cancel_interrupt", "get_interrupts"]
-                })
+                await send_event(
+                    websocket,
+                    "error",
+                    {
+                        "message": f"Unknown action: {action}",
+                        "supported_actions": [
+                            "send_message",
+                            "resume_interrupt",
+                            "cancel_interrupt",
+                            "get_interrupts",
+                        ],
+                    },
+                )
 
     except WebSocketDisconnect:
         print(f"WebSocket connection {connection_id} disconnected")
     except Exception as e:
-        await send_event(websocket, "error", {
-            "message": f"Unexpected error: {str(e)}",
-            "error_type": type(e).__name__
-        })
+        await send_event(
+            websocket,
+            "error",
+            {"message": f"Unexpected error: {str(e)}", "error_type": type(e).__name__},
+        )
     finally:
         # Clean up connection
         if connection_id in active_connections:
             del active_connections[connection_id]
 
 
-async def handle_send_message(websocket: WebSocket, request_data: dict, runner, connection_id: str):
+async def handle_send_message(
+    websocket: WebSocket, request_data: dict, runner, connection_id: str
+):
     """Handle send_message action with unified streaming.
-    
+
     Args:
         websocket: WebSocket connection
         request_data: Client request data
@@ -178,25 +207,27 @@ async def handle_send_message(websocket: WebSocket, request_data: dict, runner, 
         human_message = HumanMessage(content=cast(list, langchain_content))
 
         # Send message started event
-        await send_event(websocket, "message_started", {
-            "thread_id": thread_id,
-            "message": "Processing your message..."
-        })
+        await send_event(
+            websocket,
+            "message_started",
+            {"thread_id": thread_id, "message": "Processing your message..."},
+        )
 
         # Start unified streaming
-        async for event in runner.stream(
-            messages=[human_message],
-            thread_id=thread_id
-        ):
+        async for event in runner.stream(messages=[human_message], thread_id=thread_id):
             event_type = event.get("type")
 
             if event_type == "ai_token":
                 # Stream AI response tokens
-                await send_event(websocket, "ai_token", {
-                    "content": event["content"],
-                    "thread_id": event["thread_id"],
-                    "metadata": event.get("metadata", {})
-                })
+                await send_event(
+                    websocket,
+                    "ai_token",
+                    {
+                        "content": event["content"],
+                        "thread_id": event["thread_id"],
+                        "metadata": event.get("metadata", {}),
+                    },
+                )
 
             elif event_type == "interrupt_detected":
                 # Handle interrupt detection
@@ -204,57 +235,79 @@ async def handle_send_message(websocket: WebSocket, request_data: dict, runner, 
                 question_data = event["question_data"]
 
                 # Store interrupt in connection state
-                active_connections[connection_id]["pending_interrupts"][interrupt_id] = {
+                active_connections[connection_id]["pending_interrupts"][
+                    interrupt_id
+                ] = {
                     "question_data": question_data,
                 }
 
-                await send_event(websocket, "interrupt_detected", {
-                    "interrupt_id": interrupt_id,
-                    "thread_id": event["thread_id"],
-                    "question_data": question_data,
-                    "resumable": event.get("resumable", True)
-                })
+                await send_event(
+                    websocket,
+                    "interrupt_detected",
+                    {
+                        "interrupt_id": interrupt_id,
+                        "thread_id": event["thread_id"],
+                        "question_data": question_data,
+                        "resumable": event.get("resumable", True),
+                    },
+                )
 
             elif event_type == "question_token":
                 # Stream question tokens (from StreamWriter)
-                await send_event(websocket, "question_token", {
-                    "content": event["content"],
-                    "thread_id": event["thread_id"]
-                })
+                await send_event(
+                    websocket,
+                    "question_token",
+                    {"content": event["content"], "thread_id": event["thread_id"]},
+                )
 
             elif event_type == "state_update":
                 # Optional: Send state updates for debugging
-                await send_event(websocket, "state_update", {
-                    "thread_id": event["thread_id"],
-                    "state_keys": event["state_keys"],
-                    "has_interrupt": event["has_interrupt"]
-                })
+                await send_event(
+                    websocket,
+                    "state_update",
+                    {
+                        "thread_id": event["thread_id"],
+                        "state_keys": event["state_keys"],
+                        "has_interrupt": event["has_interrupt"],
+                    },
+                )
 
             elif event_type == "error":
                 # Handle streaming errors
-                await send_event(websocket, "error", {
-                    "message": event["error"],
-                    "thread_id": event["thread_id"],
-                    "error_type": event.get("error_type", "UnknownError")
-                })
+                await send_event(
+                    websocket,
+                    "error",
+                    {
+                        "message": event["error"],
+                        "thread_id": event["thread_id"],
+                        "error_type": event.get("error_type", "UnknownError"),
+                    },
+                )
 
         # Send completion event if no interrupts pending
         if not active_connections[connection_id]["pending_interrupts"]:
-            await send_event(websocket, "message_complete", {
-                "thread_id": thread_id,
-                "status": "completed"
-            })
+            await send_event(
+                websocket,
+                "message_complete",
+                {"thread_id": thread_id, "status": "completed"},
+            )
 
     except Exception as e:
-        await send_event(websocket, "error", {
-            "message": f"Failed to process message: {str(e)}",
-            "error_type": type(e).__name__
-        })
+        await send_event(
+            websocket,
+            "error",
+            {
+                "message": f"Failed to process message: {str(e)}",
+                "error_type": type(e).__name__,
+            },
+        )
 
 
-async def handle_resume_interrupt(websocket: WebSocket, request_data: dict, runner, connection_id: str):
+async def handle_resume_interrupt(
+    websocket: WebSocket, request_data: dict, runner, connection_id: str
+):
     """Handle resume_interrupt action.
-    
+
     Args:
         websocket: WebSocket connection
         request_data: Client request data
@@ -267,81 +320,102 @@ async def handle_resume_interrupt(websocket: WebSocket, request_data: dict, runn
         thread_id = active_connections[connection_id]["thread_id"]
 
         if not thread_id:
-            await send_event(websocket, "error", {
-                "message": "No active thread for this connection"
-            })
+            await send_event(
+                websocket, "error", {"message": "No active thread for this connection"}
+            )
             return
 
         # Remove interrupt from pending list
         if interrupt_id in active_connections[connection_id]["pending_interrupts"]:
             del active_connections[connection_id]["pending_interrupts"][interrupt_id]
 
-        await send_event(websocket, "interrupt_resumed", {
-            "interrupt_id": interrupt_id,
-            "thread_id": thread_id,
-            "user_response": user_response
-        })
+        await send_event(
+            websocket,
+            "interrupt_resumed",
+            {
+                "interrupt_id": interrupt_id,
+                "thread_id": thread_id,
+                "user_response": user_response,
+            },
+        )
 
         # Resume streaming
         async for event in runner.resume_interrupt(
-            thread_id=thread_id,
-            interrupt_id=interrupt_id,
-            user_response=user_response
+            thread_id=thread_id, interrupt_id=interrupt_id, user_response=user_response
         ):
             event_type = event.get("type")
 
             if event_type == "ai_token":
-                await send_event(websocket, "ai_token", {
-                    "content": event["content"],
-                    "thread_id": event["thread_id"],
-                    "metadata": event.get("metadata", {}),
-                    "resumed": True
-                })
+                await send_event(
+                    websocket,
+                    "ai_token",
+                    {
+                        "content": event["content"],
+                        "thread_id": event["thread_id"],
+                        "metadata": event.get("metadata", {}),
+                        "resumed": True,
+                    },
+                )
 
             elif event_type == "interrupt_detected":
                 # New interrupt after resume
                 new_interrupt_id = event["interrupt_id"]
                 question_data = event["question_data"]
 
-                active_connections[connection_id]["pending_interrupts"][new_interrupt_id] = {
+                active_connections[connection_id]["pending_interrupts"][
+                    new_interrupt_id
+                ] = {
                     "question_data": question_data,
                 }
 
-                await send_event(websocket, "interrupt_detected", {
-                    "interrupt_id": new_interrupt_id,
-                    "thread_id": event["thread_id"],
-                    "question_data": question_data
-                })
+                await send_event(
+                    websocket,
+                    "interrupt_detected",
+                    {
+                        "interrupt_id": new_interrupt_id,
+                        "thread_id": event["thread_id"],
+                        "question_data": question_data,
+                    },
+                )
 
             elif event_type == "question_token":
-                await send_event(websocket, "question_token", {
-                    "content": event["content"],
-                    "thread_id": event["thread_id"]
-                })
+                await send_event(
+                    websocket,
+                    "question_token",
+                    {"content": event["content"], "thread_id": event["thread_id"]},
+                )
 
             elif event_type == "error":
-                await send_event(websocket, "error", {
-                    "message": event["error"],
-                    "thread_id": event["thread_id"]
-                })
+                await send_event(
+                    websocket,
+                    "error",
+                    {"message": event["error"], "thread_id": event["thread_id"]},
+                )
 
         # Send completion if no more interrupts
         if not active_connections[connection_id]["pending_interrupts"]:
-            await send_event(websocket, "message_complete", {
-                "thread_id": thread_id,
-                "status": "completed"
-            })
+            await send_event(
+                websocket,
+                "message_complete",
+                {"thread_id": thread_id, "status": "completed"},
+            )
 
     except Exception as e:
-        await send_event(websocket, "error", {
-            "message": f"Failed to resume interrupt: {str(e)}",
-            "error_type": type(e).__name__
-        })
+        await send_event(
+            websocket,
+            "error",
+            {
+                "message": f"Failed to resume interrupt: {str(e)}",
+                "error_type": type(e).__name__,
+            },
+        )
 
 
-async def handle_cancel_interrupt(websocket: WebSocket, request_data: dict, connection_id: str):
+async def handle_cancel_interrupt(
+    websocket: WebSocket, request_data: dict, connection_id: str
+):
     """Handle cancel_interrupt action.
-    
+
     Args:
         websocket: WebSocket connection
         request_data: Client request data
@@ -352,45 +426,68 @@ async def handle_cancel_interrupt(websocket: WebSocket, request_data: dict, conn
         thread_id = request_data.get("thread_id")
 
         if not thread_id:
-            await send_event(websocket, "error", {
-                "message": "thread_id is required for cancel_interrupt",
-                "error_type": "ValidationError"
-            })
+            await send_event(
+                websocket,
+                "error",
+                {
+                    "message": "thread_id is required for cancel_interrupt",
+                    "error_type": "ValidationError",
+                },
+            )
             return
 
         # Get the runner instance
-        from src.workflow.chat_runner import create_chat_runner
+
         runner = await create_chat_runner()
 
         # Cancel the interrupt in LangGraph
         result = await runner.cancel_interrupt(thread_id, interrupt_id)
 
         # Remove from local pending interrupts
-        if interrupt_id and interrupt_id in active_connections[connection_id]["pending_interrupts"]:
+        if (
+            interrupt_id
+            and interrupt_id in active_connections[connection_id]["pending_interrupts"]
+        ):
             del active_connections[connection_id]["pending_interrupts"][interrupt_id]
 
         if result["status"] == "cancelled":
-            await send_event(websocket, "interrupt_cancelled", {
-                "interrupt_id": interrupt_id,
-                "thread_id": thread_id,
-                "message": result["message"]
-            })
+            await send_event(
+                websocket,
+                "interrupt_cancelled",
+                {
+                    "interrupt_id": interrupt_id,
+                    "thread_id": thread_id,
+                    "message": result["message"],
+                },
+            )
         else:
-            await send_event(websocket, "error", {
-                "message": result.get("error", result.get("message", "Unknown error")),
-                "error_type": "CancellationError"
-            })
+            await send_event(
+                websocket,
+                "error",
+                {
+                    "message": result.get(
+                        "error", result.get("message", "Unknown error")
+                    ),
+                    "error_type": "CancellationError",
+                },
+            )
 
     except Exception as e:
-        await send_event(websocket, "error", {
-            "message": f"Failed to cancel interrupt: {str(e)}",
-            "error_type": type(e).__name__
-        })
+        await send_event(
+            websocket,
+            "error",
+            {
+                "message": f"Failed to cancel interrupt: {str(e)}",
+                "error_type": type(e).__name__,
+            },
+        )
 
 
-async def handle_get_interrupts(websocket: WebSocket, request_data: dict, runner, connection_id: str):
+async def handle_get_interrupts(
+    websocket: WebSocket, request_data: dict, runner, connection_id: str
+):
     """Handle get_interrupts action.
-    
+
     Args:
         websocket: WebSocket connection
         request_data: Client request data
@@ -401,28 +498,37 @@ async def handle_get_interrupts(websocket: WebSocket, request_data: dict, runner
         thread_id = active_connections[connection_id]["thread_id"]
 
         if not thread_id:
-            await send_event(websocket, "interrupts_list", {
-                "interrupts": [],
-                "message": "No active thread"
-            })
+            await send_event(
+                websocket,
+                "interrupts_list",
+                {"interrupts": [], "message": "No active thread"},
+            )
             return
 
         # Get interrupts from runner and connection state
         runner_interrupts = await runner.get_interrupts(thread_id)
         pending_interrupts = active_connections[connection_id]["pending_interrupts"]
 
-        await send_event(websocket, "interrupts_list", {
-            "thread_id": thread_id,
-            "interrupts": runner_interrupts,
-            "pending_count": len(pending_interrupts),
-            "pending_ids": list(pending_interrupts.keys())
-        })
+        await send_event(
+            websocket,
+            "interrupts_list",
+            {
+                "thread_id": thread_id,
+                "interrupts": runner_interrupts,
+                "pending_count": len(pending_interrupts),
+                "pending_ids": list(pending_interrupts.keys()),
+            },
+        )
 
     except Exception as e:
-        await send_event(websocket, "error", {
-            "message": f"Failed to get interrupts: {str(e)}",
-            "error_type": type(e).__name__
-        })
+        await send_event(
+            websocket,
+            "error",
+            {
+                "message": f"Failed to get interrupts: {str(e)}",
+                "error_type": type(e).__name__,
+            },
+        )
 
 
 # Utility endpoint to get connection stats
@@ -439,10 +545,12 @@ async def connection_stats(websocket: WebSocket):
                     {
                         "connection_id": conn_id,
                         "thread_id": conn_data.get("thread_id"),
-                        "pending_interrupts": len(conn_data.get("pending_interrupts", {})),
+                        "pending_interrupts": len(
+                            conn_data.get("pending_interrupts", {})
+                        ),
                     }
                     for conn_id, conn_data in active_connections.items()
-                ]
+                ],
             }
 
             await websocket.send_text(json.dumps(stats))
