@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-from src.api.routes import chat, chat_websocket  # noqa: E402
+from src.api.routes import chat, chat_websocket, unified_websocket  # noqa: E402
 from src.app.services.chat_service import ChatService  # noqa: E402
 from src.workflow.chat_runner import create_chat_runner  # noqa: E402
 
@@ -52,6 +52,7 @@ app.add_middleware(
 
 app.include_router(chat.router)
 app.include_router(chat_websocket.router)
+app.include_router(unified_websocket.router)
 
 
 @app.get("/")
@@ -69,6 +70,8 @@ async def root():
             "stream_workflow": "/workflow/stream",
             "websocket_workflow": "/ws/workflow",
             "websocket_chat": "/ws/chat",
+            "unified_websocket_chat": "/ws/unified-chat",
+            "websocket_stats": "/ws/stats",
             "get_state": "/workflow/state/{thread_id}",
             "get_history": "/workflow/history/{thread_id}",
             "update_state": "/workflow/state/{thread_id}/update",
