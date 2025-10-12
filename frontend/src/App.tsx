@@ -1,12 +1,19 @@
 import { useState, useEffect } from "react";
 import ChatInterface from "./components/ChatInterface";
 import Sidebar from "./components/Sidebar";
+import { Thread } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
+interface ThreadResponse {
+  thread_id: string;
+  title?: string;
+  created_at: string;
+}
+
 function App() {
-  const [threads, setThreads] = useState([]);
-  const [currentThreadId, setCurrentThreadId] = useState(null);
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // Load threads from backend on mount
@@ -19,12 +26,14 @@ function App() {
       const response = await fetch(`${API_URL}/chat/threads?user_id=default`);
       if (response.ok) {
         const data = await response.json();
-        const formattedThreads = data.threads.map((thread) => ({
-          id: thread.thread_id,
-          title: thread.title || "New Chat",
-          createdAt: thread.created_at,
-          messages: [],
-        }));
+        const formattedThreads: Thread[] = data.threads.map(
+          (thread: ThreadResponse) => ({
+            id: thread.thread_id,
+            title: thread.title || "New Chat",
+            createdAt: thread.created_at,
+            messages: [],
+          })
+        );
         setThreads(formattedThreads);
       }
     } catch (error) {
@@ -37,11 +46,11 @@ function App() {
     setCurrentThreadId(null);
   };
 
-  const selectThread = (threadId) => {
+  const selectThread = (threadId: string) => {
     setCurrentThreadId(threadId);
   };
 
-  const deleteThread = async (threadId) => {
+  const deleteThread = async (threadId: string) => {
     // TODO: Add delete endpoint to backend
     setThreads(threads.filter((t) => t.id !== threadId));
     if (currentThreadId === threadId) {
@@ -49,7 +58,7 @@ function App() {
     }
   };
 
-  const updateThreadTitle = (threadId, firstMessage) => {
+  const updateThreadTitle = (threadId: string, firstMessage: string) => {
     setThreads((prevThreads) => {
       const existingThread = prevThreads.find((t) => t.id === threadId);
       if (existingThread) {
@@ -81,13 +90,15 @@ function App() {
     });
   };
 
-  const handleThreadCreated = (threadId) => {
+  const handleThreadCreated = (threadId: string) => {
     setCurrentThreadId(threadId);
+    // Reload threads to get the new thread in the sidebar
+    loadThreads();
   };
 
   return (
     <div className="flex h-screen bg-black text-white overflow-hidden">
-      {/* Sidebar */}
+      {/* Sidebar - Always rendered but hidden on mobile when closed */}
       <Sidebar
         threads={threads}
         currentThreadId={currentThreadId}
@@ -99,7 +110,7 @@ function App() {
       />
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         <ChatInterface
           threadId={currentThreadId}
           onThreadCreated={handleThreadCreated}

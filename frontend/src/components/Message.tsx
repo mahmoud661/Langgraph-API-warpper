@@ -1,10 +1,14 @@
 import { User, Bot, AlertCircle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Message as MessageType } from "../types";
 
-function Message({ message }) {
+interface MessageProps {
+  message: MessageType;
+}
+
+function Message({ message }: MessageProps) {
   const isUser = message.role === "user";
-  const isSystem = message.role === "system";
   const isError = message.isError;
 
   console.log("Message rendering:", {
@@ -61,14 +65,25 @@ function Message({ message }) {
                   p: ({ children }) => (
                     <p className="mb-2 last:mb-0">{children}</p>
                   ),
-                  code: ({ inline, children }) =>
+                  code: ({
+                    node,
+                    inline,
+                    className,
+                    children,
+                    ...props
+                  }: any) =>
                     inline ? (
-                      <code className="px-1.5 py-0.5 bg-gray-800 rounded text-sm">
+                      <code
+                        className="px-1.5 py-0.5 bg-gray-800 rounded text-sm"
+                        {...props}
+                      >
                         {children}
                       </code>
                     ) : (
                       <pre className="bg-gray-800 p-3 rounded-lg overflow-x-auto my-2">
-                        <code>{children}</code>
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
                       </pre>
                     ),
                   ul: ({ children }) => (

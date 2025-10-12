@@ -1,6 +1,11 @@
 import Message from "./Message";
+import { Message as MessageType } from "../types";
 
-function MessageList({ messages }) {
+interface MessageListProps {
+  messages: MessageType[];
+}
+
+function MessageList({ messages }: MessageListProps) {
   console.log(
     "MessageList rendering with messages:",
     messages.length,
