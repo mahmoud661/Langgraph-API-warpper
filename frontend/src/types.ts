@@ -21,6 +21,7 @@ export interface WebSocketMessage {
   content?: string;
   message?: string;
   error?: string;
+  message_id?: string;
 }
 
 export interface ChatMessage {

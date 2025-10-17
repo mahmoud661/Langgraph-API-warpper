@@ -16,7 +16,7 @@ function MessageList({ messages }: MessageListProps) {
     <div className="max-w-4xl px-4 py-6 mx-auto space-y-6">
       {messages.map((message, index) => (
         <Message
-          key={`${index}-${message.content?.length || 0}`}
+          key={message.id ?? `${message.timestamp}-${index}`}
           message={message}
         />
       ))}

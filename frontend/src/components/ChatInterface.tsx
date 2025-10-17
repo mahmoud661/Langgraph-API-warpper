@@ -6,6 +6,11 @@ import { Message, WebSocketMessage, ChatMessage } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
+const generateMessageId = () =>
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
 interface ChatInterfaceProps {
   threadId: string | null;
   onThreadCreated: (threadId: string) => void;
@@ -34,6 +39,7 @@ function ChatInterface({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isNewThreadRef = useRef(false); // Track if we just created this thread
+  const currentAssistantMessageIdRef = useRef<string | null>(null);
 
   const {
     sendMessage: wsSendMessage,
@@ -81,11 +87,26 @@ function ChatInterface({
   }, [threadId]);
 
   useEffect(() => {
-    scrollToBottom();
+    // Only auto-scroll if user is near bottom (within 100px)
+    const messagesContainer = messagesEndRef.current?.parentElement;
+    if (messagesContainer) {
+      const isNearBottom =
+        messagesContainer.scrollHeight -
+          messagesContainer.scrollTop -
+          messagesContainer.clientHeight <
+        100;
+
+      if (isNearBottom || messages.length === 1) {
+        scrollToBottom();
+      }
+    }
   }, [messages]);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
+    });
   };
 
   const loadHistory = async () => {
@@ -98,7 +119,7 @@ function ChatInterface({
             role: msg.role,
             content: msg.content[0]?.data || "",
             timestamp: msg.timestamp,
-            id: msg.id,
+            id: msg.id ?? generateMessageId(),
           })
         );
         // Only set messages if we actually got history
@@ -126,6 +147,9 @@ function ChatInterface({
         onThreadCreated(backendThreadId);
       }
 
+      const assistantMessageId = data.message_id ?? generateMessageId();
+      currentAssistantMessageIdRef.current = assistantMessageId;
+
       console.log("Adding assistant message placeholder");
       setIsStreaming(true);
       // Add assistant message placeholder
@@ -137,6 +161,7 @@ function ChatInterface({
             role: "assistant",
             content: "",
             timestamp: new Date().toISOString(),
+            id: assistantMessageId,
             isStreaming: true,
           },
         ];
@@ -145,44 +170,99 @@ function ChatInterface({
       });
     } else if (eventType === "ai_token") {
       // Update the last message with streaming content
+      const chunk = data.content ?? "";
+      if (!chunk) {
+        return;
+      }
+
+      const targetId =
+        data.message_id ?? currentAssistantMessageIdRef.current ?? undefined;
+
       setMessages((prev) => {
         console.log("Updating message with token, prev messages:", prev);
-        const newMessages = [...prev];
-        const lastIndex = newMessages.length - 1;
-        if (lastIndex >= 0 && newMessages[lastIndex].role === "assistant") {
-          // Create a new message object instead of mutating
+        if (prev.length === 0) {
+          return prev;
+        }
+
+        let applied = false;
+
+        const updatedById = prev.map((message) => {
+          if (!applied && targetId && message.id === targetId) {
+            applied = true;
+            return {
+              ...message,
+              content: message.content + chunk,
+            };
+          }
+          return message;
+        });
+
+        if (applied) {
+          return updatedById;
+        }
+
+        const lastIndex = prev.length - 1;
+        const lastMessage = prev[lastIndex];
+
+        if (lastIndex >= 0 && lastMessage.role === "assistant") {
+          const assistantId = lastMessage.id ?? generateMessageId();
+          currentAssistantMessageIdRef.current = assistantId;
+
+          const newMessages = [...prev];
           newMessages[lastIndex] = {
-            ...newMessages[lastIndex],
-            content: newMessages[lastIndex].content + (data.content || ""),
+            ...lastMessage,
+            id: assistantId,
+            content: lastMessage.content + chunk,
           };
+
           console.log(
             "Updated assistant message content:",
             newMessages[lastIndex].content
           );
-        } else {
-          console.log(
-            "WARNING: Last message is not assistant!",
-            newMessages[lastIndex]
-          );
+
+          return newMessages;
         }
-        return newMessages;
+
+        console.log(
+          "WARNING: Could not locate assistant message for incoming chunk",
+          data
+        );
+        return prev;
       });
     } else if (eventType === "message_complete") {
       setIsStreaming(false);
       // Reset the new thread flag now that the first message is complete
       isNewThreadRef.current = false;
+      const targetId =
+        data.message_id ?? currentAssistantMessageIdRef.current ?? undefined;
+
       setMessages((prev) => {
-        const newMessages = [...prev];
-        const lastIndex = newMessages.length - 1;
-        if (lastIndex >= 0) {
-          // Create a new message object instead of mutating
-          newMessages[lastIndex] = {
-            ...newMessages[lastIndex],
-            isStreaming: false,
-          };
+        if (prev.length === 0) {
+          return prev;
         }
+
+        const newMessages = prev.map((message, index) => {
+          if (targetId && message.id === targetId) {
+            return {
+              ...message,
+              isStreaming: false,
+            };
+          }
+
+          if (!targetId && index === prev.length - 1) {
+            return {
+              ...message,
+              isStreaming: false,
+            };
+          }
+
+          return message;
+        });
+
         return newMessages;
       });
+
+      currentAssistantMessageIdRef.current = null;
     } else if (eventType === "error") {
       setIsStreaming(false);
       console.error("Stream error:", data);
@@ -192,6 +272,7 @@ function ChatInterface({
           role: "system",
           content: `Error: ${data.message || data.error}`,
           timestamp: new Date().toISOString(),
+          id: generateMessageId(),
           isError: true,
         },
       ]);
@@ -205,6 +286,7 @@ function ChatInterface({
       role: "user",
       content: input.trim(),
       timestamp: new Date().toISOString(),
+      id: generateMessageId(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
@@ -231,6 +313,7 @@ function ChatInterface({
             role: "system",
             content: "Failed to connect. Please try again.",
             timestamp: new Date().toISOString(),
+            id: generateMessageId(),
             isError: true,
           },
         ]);
@@ -260,6 +343,7 @@ function ChatInterface({
           role: "system",
           content: "Failed to send message. Please try again.",
           timestamp: new Date().toISOString(),
+          id: generateMessageId(),
           isError: true,
         },
       ]);
@@ -344,7 +428,7 @@ function ChatInterface({
       {/* Input Area */}
       <div className="px-3 py-3 border-t border-gray-800">
         <div className="max-w-4xl mx-auto">
-          <div className="relative flex items-end gap-2">
+          <div className="relative flex items-center justify-center gap-2">
             <div className="relative flex-1">
               <textarea
                 ref={inputRef}
@@ -352,13 +436,8 @@ function ChatInterface({
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
                 placeholder="Type your message..."
-                className="w-full px-3 py-2 text-sm bg-gray-900 border border-gray-700 rounded-md resize-none focus:outline-none focus:border-white scrollbar-thin"
+                className="w-full px-3 py-2 overflow-hidden text-sm bg-gray-900 border border-gray-700 border-none rounded-md resize-none focus:outline-none focus:border-white scrollbar-thin min-h-[40px] max-h-[200px]"
                 rows={1}
-                style={{
-                  minHeight: "40px",
-                  maxHeight: "200px",
-                  height: "auto",
-                }}
                 onInput={(e) => {
                   const target = e.target as HTMLTextAreaElement;
                   target.style.height = "auto";
@@ -398,4 +477,3 @@ function ChatInterface({
 }
 
 export default ChatInterface;
-

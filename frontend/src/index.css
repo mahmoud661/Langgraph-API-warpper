@@ -21,5 +21,15 @@
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     @apply bg-gray-500;
   }
-}
 
+  /* Smooth text rendering for streaming */
+  .prose {
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .streaming-content {
+    position: relative;
+  }
+}

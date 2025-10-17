@@ -97,7 +97,7 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen bg-black text-white overflow-hidden">
+    <div className="flex h-screen overflow-hidden text-white bg-black">
       {/* Sidebar - Always rendered but hidden on mobile when closed */}
       <Sidebar
         threads={threads}
@@ -110,7 +110,7 @@ function App() {
       />
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex flex-col flex-1 min-w-0">
         <ChatInterface
           threadId={currentThreadId}
           onThreadCreated={handleThreadCreated}
