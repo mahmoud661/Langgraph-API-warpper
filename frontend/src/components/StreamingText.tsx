@@ -7,13 +7,10 @@ interface StreamingTextProps {
 }
 
 export function StreamingText({ chunks = [] }: StreamingTextProps) {
-  // Combine all chunks to get the full content
-  const fullContent = chunks.join("");
-
   // Markdown component customization
   const markdownComponents = {
     p: ({ children }: any) => (
-      <p className="mb-2 last:mb-0">{children}</p>
+      <span className="mb-2 last:mb-0">{children}</span>
     ),
     code: ({ node, inline, className, children, ...props }: any) =>
       inline ? (
@@ -64,12 +61,18 @@ export function StreamingText({ chunks = [] }: StreamingTextProps) {
             animate={{ opacity: 1, filter: "blur(0px)" }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.5 }}
-            style={{
-              display: "inline",
-              whiteSpace: "pre-wrap",
+            style={{ 
+              display: "inline", 
+              overflowWrap: "break-word",
+              whiteSpace: "pre-wrap"
             }}
           >
-            {chunk}
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={markdownComponents}
+            >
+              {chunk}
+            </ReactMarkdown>
           </motion.span>
         ))}
       </AnimatePresence>
