@@ -3,8 +3,8 @@ export interface Message {
   content: string;
   timestamp: string;
   id?: string;
-  isStreaming?: boolean;
   isError?: boolean;
+  chunks?: string[]; // For streaming messages - each chunk animates separately
 }
 
 export interface Thread {

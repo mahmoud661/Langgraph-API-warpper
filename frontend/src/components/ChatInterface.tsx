@@ -38,8 +38,7 @@ function ChatInterface({
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const isNewThreadRef = useRef(false); // Track if we just created this thread
-  const currentAssistantMessageIdRef = useRef<string | null>(null);
+  const isNewThreadRef = useRef(false);
 
   const {
     sendMessage: wsSendMessage,
@@ -53,33 +52,16 @@ function ChatInterface({
     onError: (error: Event) => console.error("WebSocket error:", error),
   });
 
-  // Connect WebSocket on component mount
   useEffect(() => {
     connect();
-    return () => {
-      disconnect();
-    };
+    return () => disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only connect once on mount
+  }, []);
 
   useEffect(() => {
-    console.log(
-      "threadId changed to:",
-      threadId,
-      "isNewThreadRef:",
-      isNewThreadRef.current
-    );
-    if (threadId) {
-      // Don't load history if this is a thread we just created
-      if (!isNewThreadRef.current) {
-        console.log("Loading history for existing thread:", threadId);
-        loadHistory();
-      } else {
-        console.log("Skipping history load for new thread:", threadId);
-        // Don't reset here - it will be reset when message_complete arrives
-      }
-    } else {
-      console.log("No threadId, clearing messages");
+    if (threadId && !isNewThreadRef.current) {
+      loadHistory();
+    } else if (!threadId) {
       setMessages([]);
       isNewThreadRef.current = false;
     }
@@ -87,7 +69,6 @@ function ChatInterface({
   }, [threadId]);
 
   useEffect(() => {
-    // Only auto-scroll if user is near bottom (within 100px)
     const messagesContainer = messagesEndRef.current?.parentElement;
     if (messagesContainer) {
       const isNearBottom =
@@ -97,17 +78,10 @@ function ChatInterface({
         100;
 
       if (isNearBottom || messages.length === 1) {
-        scrollToBottom();
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
       }
     }
   }, [messages]);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "end",
-    });
-  };
 
   const loadHistory = async () => {
     try {
@@ -122,8 +96,6 @@ function ChatInterface({
             id: msg.id ?? generateMessageId(),
           })
         );
-        // Only set messages if we actually got history
-        // Don't overwrite messages we're currently composing
         if (formattedMessages.length > 0) {
           setMessages(formattedMessages);
         }
@@ -134,138 +106,47 @@ function ChatInterface({
   };
 
   const handleWebSocketMessage = (data: WebSocketMessage) => {
-    console.log("WebSocket message received:", data);
-
-    const eventType = data.event || data.type; // Backend uses 'event' field
+    const eventType = data.event || data.type;
 
     if (eventType === "message_started") {
-      // Extract thread_id from backend response
-      const backendThreadId = data.thread_id;
-      if (backendThreadId && !threadId) {
-        // New thread created by backend - mark to skip history load
+      if (data.thread_id && !threadId) {
         isNewThreadRef.current = true;
-        onThreadCreated(backendThreadId);
+        onThreadCreated(data.thread_id);
       }
 
-      const assistantMessageId = data.message_id ?? generateMessageId();
-      currentAssistantMessageIdRef.current = assistantMessageId;
-
-      console.log("Adding assistant message placeholder");
       setIsStreaming(true);
-      // Add assistant message placeholder
-      setMessages((prev) => {
-        console.log("Previous messages before adding assistant:", prev);
-        const updated: Message[] = [
-          ...prev,
-          {
-            role: "assistant",
-            content: "",
-            timestamp: new Date().toISOString(),
-            id: assistantMessageId,
-            isStreaming: true,
-          },
-        ];
-        console.log("Updated messages after adding assistant:", updated);
-        return updated;
-      });
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "",
+          timestamp: new Date().toISOString(),
+          id: data.message_id ?? generateMessageId(),
+          chunks: [],
+        },
+      ]);
     } else if (eventType === "ai_token") {
-      // Update the last message with streaming content
       const chunk = data.content ?? "";
-      if (!chunk) {
-        return;
-      }
-
-      const targetId =
-        data.message_id ?? currentAssistantMessageIdRef.current ?? undefined;
+      if (!chunk) return;
 
       setMessages((prev) => {
-        console.log("Updating message with token, prev messages:", prev);
-        if (prev.length === 0) {
-          return prev;
-        }
-
-        let applied = false;
-
-        const updatedById = prev.map((message) => {
-          if (!applied && targetId && message.id === targetId) {
-            applied = true;
-            return {
-              ...message,
-              content: message.content + chunk,
-            };
-          }
-          return message;
-        });
-
-        if (applied) {
-          return updatedById;
-        }
-
-        const lastIndex = prev.length - 1;
-        const lastMessage = prev[lastIndex];
-
-        if (lastIndex >= 0 && lastMessage.role === "assistant") {
-          const assistantId = lastMessage.id ?? generateMessageId();
-          currentAssistantMessageIdRef.current = assistantId;
-
-          const newMessages = [...prev];
-          newMessages[lastIndex] = {
-            ...lastMessage,
-            id: assistantId,
-            content: lastMessage.content + chunk,
+        const last = prev[prev.length - 1];
+        if (last?.role === "assistant") {
+          const updated = [...prev];
+          updated[prev.length - 1] = {
+            ...last,
+            content: last.content + chunk,
+            chunks: [...(last.chunks || []), chunk],
           };
-
-          console.log(
-            "Updated assistant message content:",
-            newMessages[lastIndex].content
-          );
-
-          return newMessages;
+          return updated;
         }
-
-        console.log(
-          "WARNING: Could not locate assistant message for incoming chunk",
-          data
-        );
         return prev;
       });
     } else if (eventType === "message_complete") {
       setIsStreaming(false);
-      // Reset the new thread flag now that the first message is complete
       isNewThreadRef.current = false;
-      const targetId =
-        data.message_id ?? currentAssistantMessageIdRef.current ?? undefined;
-
-      setMessages((prev) => {
-        if (prev.length === 0) {
-          return prev;
-        }
-
-        const newMessages = prev.map((message, index) => {
-          if (targetId && message.id === targetId) {
-            return {
-              ...message,
-              isStreaming: false,
-            };
-          }
-
-          if (!targetId && index === prev.length - 1) {
-            return {
-              ...message,
-              isStreaming: false,
-            };
-          }
-
-          return message;
-        });
-
-        return newMessages;
-      });
-
-      currentAssistantMessageIdRef.current = null;
     } else if (eventType === "error") {
       setIsStreaming(false);
-      console.error("Stream error:", data);
       setMessages((prev) => [
         ...prev,
         {
@@ -293,67 +174,30 @@ function ChatInterface({
     const messageContent = input.trim();
     setInput("");
 
-    // Update thread title with first message if this is a new thread
     if (messages.length === 0 && threadId) {
       onUpdateThreadTitle(threadId, messageContent);
     }
 
-    // Wait for WebSocket connection if not connected
     if (!isConnected) {
-      console.log("WebSocket not connected, attempting to connect...");
       try {
         await connect();
-        // Give it a moment to establish connection
         await new Promise((resolve) => setTimeout(resolve, 500));
       } catch (error) {
         console.error("Failed to connect WebSocket:", error);
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "system",
-            content: "Failed to connect. Please try again.",
-            timestamp: new Date().toISOString(),
-            id: generateMessageId(),
-            isError: true,
-          },
-        ]);
         return;
       }
     }
 
-    // Send message via WebSocket
     try {
       const chatMessage: ChatMessage = {
         action: "send_message",
-        content: [
-          {
-            type: "text",
-            data: messageContent,
-          },
-        ],
-        thread_id: threadId, // Can be null for new conversations - backend will create one
+        content: [{ type: "text", data: messageContent }],
+        thread_id: threadId,
         model: "gemini-2.0-flash-exp",
       };
       wsSendMessage(chatMessage);
     } catch (error) {
       console.error("Failed to send message:", error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "system",
-          content: "Failed to send message. Please try again.",
-          timestamp: new Date().toISOString(),
-          id: generateMessageId(),
-          isError: true,
-        },
-      ]);
-    }
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
     }
   };
 
@@ -434,7 +278,12 @@ function ChatInterface({
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
                 placeholder="Type your message..."
                 className="w-full px-3 py-2 overflow-hidden text-sm bg-gray-900 border border-gray-700 border-none rounded-md resize-none focus:outline-none focus:border-white scrollbar-thin min-h-[40px] max-h-[200px]"
                 rows={1}

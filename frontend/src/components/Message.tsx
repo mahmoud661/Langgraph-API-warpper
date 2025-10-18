@@ -10,12 +10,6 @@ function Message({ message }: MessageProps) {
   const isUser = message.role === "user";
   const isError = message.isError;
 
-  console.log("Message rendering:", {
-    role: message.role,
-    content: message.content,
-    isStreaming: message.isStreaming,
-  });
-
   return (
     <div className={`flex gap-4 ${isUser ? "flex-row-reverse" : ""}`}>
       {/* Avatar */}
@@ -57,10 +51,7 @@ function Message({ message }: MessageProps) {
           {isUser ? (
             <p className="whitespace-pre-wrap">{message.content}</p>
           ) : (
-            <StreamingText
-              content={message.content}
-              isStreaming={message.isStreaming}
-            />
+            <StreamingText chunks={message.chunks} />
           )}
         </div>
         {message.timestamp && (
@@ -74,4 +65,3 @@ function Message({ message }: MessageProps) {
 }
 
 export default Message;
-
