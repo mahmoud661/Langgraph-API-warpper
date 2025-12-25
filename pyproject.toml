@@ -22,6 +22,8 @@ dependencies = [
     "httpx>=0.28.1",
     "ruff>=0.14.10",
     "injector>=0.23.0",
+    "deepagents>=0.3.1",
+    "langchain-google-vertexai>=3.2.0",
 ]
 
 [dependency-groups]

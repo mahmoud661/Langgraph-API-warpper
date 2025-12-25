@@ -9,26 +9,35 @@ from contextlib import asynccontextmanager  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
+from src.api.di import create_base_injector  # noqa: E402
 from src.api.routes import chat, chat_websocket  # noqa: E402
 from src.app.services.chat_service import ChatService  # noqa: E402
-from src.workflow.chat_runner import create_chat_runner  # noqa: E402
+from src.app.workflow.chat_runner import ChatRunner, create_chat_runner  # noqa: E402
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan.
+    """Lifespan context manager for startup and shutdown.
 
     Args:
-        app: Description of app.
+        app: FastAPI application instance
     """
+    # Initialize ChatRunner instance
     chat_runner = await create_chat_runner()
-    app.state.chat_runner = chat_runner
 
-    chat_service = ChatService(chat_runner)
-    app.state.chat_service = chat_service
+    # Create base injector and bind ChatRunner instance
+    from injector import Binder, Module
+
+    class RuntimeModule(Module):
+        def configure(self, binder: Binder) -> None:
+            binder.bind(ChatRunner, to=chat_runner)
+
+    base_injector = create_base_injector()
+    app.state.base_injector = base_injector.create_child_injector(RuntimeModule())
 
     yield
 
+    # Cleanup
     if hasattr(chat_runner.checkpointer, "close"):
         await chat_runner.checkpointer.close()  # type: ignore
     elif hasattr(chat_runner.checkpointer, "pool"):
