@@ -1,7 +1,6 @@
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from langchain.agents import create_agent
 from langchain.agents.middleware import (
     TodoListMiddleware,
     HumanInTheLoopMiddleware,
@@ -28,6 +27,7 @@ from src.app.workflow.middleware.subagents import (
     SubAgent,
     SubAgentMiddleware,
 )
+from src.app.workflow.react_agent import create_agent
 
 
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
