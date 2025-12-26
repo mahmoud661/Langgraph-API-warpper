@@ -1,107 +1,325 @@
-"""Composite backend for routing files to different backends based on path patterns."""
+"""CompositeBackend: Route operations to different backends based on path prefix."""
 
-import asyncio
-from typing import Literal
+from collections import defaultdict
 
-from .protocol import (
+from deepagents.backends.protocol import (
     BackendProtocol,
     EditResult,
-    FileInfo,
-    FileOperationError,
-    GrepMatch,
-    WriteResult,
-    FileUploadResponse,
+    ExecuteResponse,
     FileDownloadResponse,
+    FileInfo,
+    FileUploadResponse,
+    GrepMatch,
+    SandboxBackendProtocol,
+    WriteResult,
 )
+from deepagents.backends.state import StateBackend
 
 
-class CompositeBackend(BackendProtocol):
-    """Backend that routes file operations to different backends based on path patterns."""
-
+class CompositeBackend:
     def __init__(
         self,
-        default: BackendProtocol,
-        routes: dict[str, BackendProtocol] | None = None,
-    ):
-        """Initialize composite backend.
-
-        Args:
-            default: Default backend for files not matching any route
-            routes: Dictionary mapping path prefixes to backends.
-                    For example: {"temp/": temp_backend, "cache/": cache_backend}
-        """
+        default: BackendProtocol | StateBackend,
+        routes: dict[str, BackendProtocol],
+    ) -> None:
+        # Default backend
         self.default = default
-        self.routes = routes or {}
 
-    def _get_backend(self, file_path: str) -> BackendProtocol:
-        """Get the appropriate backend for a file path."""
-        for prefix, backend in self.routes.items():
-            if file_path.startswith(prefix):
-                return backend
-        return self.default
+        # Virtual routes
+        self.routes = routes
 
-    def ls_info(self, directory: str = ".") -> list[FileInfo]:
-        """List files in directory with metadata.
+        # Sort routes by length (longest first) for correct prefix matching
+        self.sorted_routes = sorted(routes.items(), key=lambda x: len(x[0]), reverse=True)
 
-        For composite backend, this queries all backends and merges results.
+    def _get_backend_and_key(self, key: str) -> tuple[BackendProtocol, str]:
+        """Determine which backend handles this key and strip prefix.
 
         Args:
-            directory: Directory path
+            key: Original file path
 
         Returns:
-            List of FileInfo objects from all backends
+            Tuple of (backend, stripped_key) where stripped_key has the route
+            prefix removed (but keeps leading slash).
         """
-        # Check if directory matches a specific route
-        backend = self._get_backend(directory)
-        if backend != self.default:
-            return backend.ls_info(directory)
+        # Check routes in order of length (longest first)
+        for prefix, backend in self.sorted_routes:
+            if key.startswith(prefix):
+                # Strip full prefix and ensure a leading slash remains
+                # e.g., "/memories/notes.txt" → "/notes.txt"; "/memories/" → "/"
+                suffix = key[len(prefix) :]
+                stripped_key = f"/{suffix}" if suffix else "/"
+                return backend, stripped_key
 
-        # Query all backends and merge results
-        all_results = []
+        return self.default, key
 
-        # Get from default backend
-        all_results.extend(self.default.ls_info(directory))
+    def ls_info(self, path: str) -> list[FileInfo]:
+        """List files and directories in the specified directory (non-recursive).
 
-        # Get from routed backends
-        for prefix, backend in self.routes.items():
-            if directory == "." or prefix.startswith(directory):
-                results = backend.ls_info(directory)
-                # Filter to only include files under this prefix
-                for item in results:
-                    if item.path.startswith(prefix):
-                        all_results.append(item)
+        Args:
+            path: Absolute path to directory.
 
-        # Deduplicate by path
-        seen = set()
-        unique_results = []
-        for item in all_results:
-            if item.path not in seen:
-                seen.add(item.path)
-                unique_results.append(item)
+        Returns:
+            List of FileInfo-like dicts with route prefixes added, for files and directories directly in the directory.
+            Directories have a trailing / in their path and is_dir=True.
+        """
+        # Check if path matches a specific route
+        for route_prefix, backend in self.sorted_routes:
+            if path.startswith(route_prefix.rstrip("/")):
+                # Query only the matching routed backend
+                suffix = path[len(route_prefix) :]
+                search_path = f"/{suffix}" if suffix else "/"
+                infos = backend.ls_info(search_path)
+                prefixed: list[FileInfo] = []
+                for fi in infos:
+                    fi = dict(fi)
+                    fi["path"] = f"{route_prefix[:-1]}{fi['path']}"
+                    prefixed.append(fi)
+                return prefixed
 
-        return sorted(unique_results, key=lambda x: x.path)
+        # At root, aggregate default and all routed backends
+        if path == "/":
+            results: list[FileInfo] = []
+            results.extend(self.default.ls_info(path))
+            for route_prefix, backend in self.sorted_routes:
+                # Add the route itself as a directory (e.g., /memories/)
+                results.append(
+                    {
+                        "path": route_prefix,
+                        "is_dir": True,
+                        "size": 0,
+                        "modified_at": "",
+                    }
+                )
+
+            results.sort(key=lambda x: x.get("path", ""))
+            return results
+
+        # Path doesn't match a route: query only default backend
+        return self.default.ls_info(path)
+
+    async def als_info(self, path: str) -> list[FileInfo]:
+        """Async version of ls_info."""
+        # Check if path matches a specific route
+        for route_prefix, backend in self.sorted_routes:
+            if path.startswith(route_prefix.rstrip("/")):
+                # Query only the matching routed backend
+                suffix = path[len(route_prefix) :]
+                search_path = f"/{suffix}" if suffix else "/"
+                infos = await backend.als_info(search_path)
+                prefixed: list[FileInfo] = []
+                for fi in infos:
+                    fi = dict(fi)
+                    fi["path"] = f"{route_prefix[:-1]}{fi['path']}"
+                    prefixed.append(fi)
+                return prefixed
+
+        # At root, aggregate default and all routed backends
+        if path == "/":
+            results: list[FileInfo] = []
+            results.extend(await self.default.als_info(path))
+            for route_prefix, backend in self.sorted_routes:
+                # Add the route itself as a directory (e.g., /memories/)
+                results.append(
+                    {
+                        "path": route_prefix,
+                        "is_dir": True,
+                        "size": 0,
+                        "modified_at": "",
+                    }
+                )
+
+            results.sort(key=lambda x: x.get("path", ""))
+            return results
+
+        # Path doesn't match a route: query only default backend
+        return await self.default.als_info(path)
 
     def read(
         self,
         file_path: str,
-        start_line: int | None = None,
-        end_line: int | None = None,
-        page_size: int | None = None,
-        page: int | None = None,
+        offset: int = 0,
+        limit: int = 2000,
     ) -> str:
-        """Read file content with optional line range or pagination."""
-        backend = self._get_backend(file_path)
-        return backend.read(file_path, start_line, end_line, page_size, page)
+        """Read file content, routing to appropriate backend.
+
+        Args:
+            file_path: Absolute file path.
+            offset: Line offset to start reading from (0-indexed).
+            limit: Maximum number of lines to read.
+
+        Returns:
+            Formatted file content with line numbers, or error message.
+        """
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        return backend.read(stripped_key, offset=offset, limit=limit)
+
+    async def aread(
+        self,
+        file_path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> str:
+        """Async version of read."""
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        return await backend.aread(stripped_key, offset=offset, limit=limit)
+
+    def grep_raw(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+    ) -> list[GrepMatch] | str:
+        # If path targets a specific route, search only that backend
+        for route_prefix, backend in self.sorted_routes:
+            if path is not None and path.startswith(route_prefix.rstrip("/")):
+                search_path = path[len(route_prefix) - 1 :]
+                raw = backend.grep_raw(pattern, search_path if search_path else "/", glob)
+                if isinstance(raw, str):
+                    return raw
+                return [{**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw]
+
+        # Otherwise, search default and all routed backends and merge
+        all_matches: list[GrepMatch] = []
+        raw_default = self.default.grep_raw(pattern, path, glob)  # type: ignore[attr-defined]
+        if isinstance(raw_default, str):
+            # This happens if error occurs
+            return raw_default
+        all_matches.extend(raw_default)
+
+        for route_prefix, backend in self.routes.items():
+            raw = backend.grep_raw(pattern, "/", glob)
+            if isinstance(raw, str):
+                # This happens if error occurs
+                return raw
+            all_matches.extend({**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw)
+
+        return all_matches
+
+    async def agrep_raw(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+    ) -> list[GrepMatch] | str:
+        """Async version of grep_raw."""
+        # If path targets a specific route, search only that backend
+        for route_prefix, backend in self.sorted_routes:
+            if path is not None and path.startswith(route_prefix.rstrip("/")):
+                search_path = path[len(route_prefix) - 1 :]
+                raw = await backend.agrep_raw(pattern, search_path if search_path else "/", glob)
+                if isinstance(raw, str):
+                    return raw
+                return [{**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw]
+
+        # Otherwise, search default and all routed backends and merge
+        all_matches: list[GrepMatch] = []
+        raw_default = await self.default.agrep_raw(pattern, path, glob)  # type: ignore[attr-defined]
+        if isinstance(raw_default, str):
+            # This happens if error occurs
+            return raw_default
+        all_matches.extend(raw_default)
+
+        for route_prefix, backend in self.routes.items():
+            raw = await backend.agrep_raw(pattern, "/", glob)
+            if isinstance(raw, str):
+                # This happens if error occurs
+                return raw
+            all_matches.extend({**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw)
+
+        return all_matches
+
+    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+        results: list[FileInfo] = []
+
+        # Route based on path, not pattern
+        for route_prefix, backend in self.sorted_routes:
+            if path.startswith(route_prefix.rstrip("/")):
+                search_path = path[len(route_prefix) - 1 :]
+                infos = backend.glob_info(pattern, search_path if search_path else "/")
+                return [{**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos]
+
+        # Path doesn't match any specific route - search default backend AND all routed backends
+        results.extend(self.default.glob_info(pattern, path))
+
+        for route_prefix, backend in self.routes.items():
+            infos = backend.glob_info(pattern, "/")
+            results.extend({**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos)
+
+        # Deterministic ordering
+        results.sort(key=lambda x: x.get("path", ""))
+        return results
+
+    async def aglob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+        """Async version of glob_info."""
+        results: list[FileInfo] = []
+
+        # Route based on path, not pattern
+        for route_prefix, backend in self.sorted_routes:
+            if path.startswith(route_prefix.rstrip("/")):
+                search_path = path[len(route_prefix) - 1 :]
+                infos = await backend.aglob_info(pattern, search_path if search_path else "/")
+                return [{**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos]
+
+        # Path doesn't match any specific route - search default backend AND all routed backends
+        results.extend(await self.default.aglob_info(pattern, path))
+
+        for route_prefix, backend in self.routes.items():
+            infos = await backend.aglob_info(pattern, "/")
+            results.extend({**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos)
+
+        # Deterministic ordering
+        results.sort(key=lambda x: x.get("path", ""))
+        return results
 
     def write(
         self,
         file_path: str,
         content: str,
-        create_parents: bool = True,
     ) -> WriteResult:
-        """Write content to file."""
-        backend = self._get_backend(file_path)
-        return backend.write(file_path, content, create_parents)
+        """Create a new file, routing to appropriate backend.
+
+        Args:
+            file_path: Absolute file path.
+            content: File content as a string.
+
+        Returns:
+            Success message or Command object, or error if file already exists.
+        """
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        res = backend.write(stripped_key, content)
+        # If this is a state-backed update and default has state, merge so listings reflect changes
+        if res.files_update:
+            try:
+                runtime = getattr(self.default, "runtime", None)
+                if runtime is not None:
+                    state = runtime.state
+                    files = state.get("files", {})
+                    files.update(res.files_update)
+                    state["files"] = files
+            except Exception:
+                pass
+        return res
+
+    async def awrite(
+        self,
+        file_path: str,
+        content: str,
+    ) -> WriteResult:
+        """Async version of write."""
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        res = await backend.awrite(stripped_key, content)
+        # If this is a state-backed update and default has state, merge so listings reflect changes
+        if res.files_update:
+            try:
+                runtime = getattr(self.default, "runtime", None)
+                if runtime is not None:
+                    state = runtime.state
+                    files = state.get("files", {})
+                    files.update(res.files_update)
+                    state["files"] = files
+            except Exception:
+                pass
+        return res
 
     def edit(
         self,
@@ -110,142 +328,234 @@ class CompositeBackend(BackendProtocol):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        """Edit file by replacing old_string with new_string."""
-        backend = self._get_backend(file_path)
-        return backend.edit(file_path, old_string, new_string, replace_all)
-
-    def glob_info(self, pattern: str, case_sensitive: bool = True) -> list[FileInfo]:
-        """Find files matching glob pattern.
-
-        For composite backend, this queries all backends and merges results.
+        """Edit a file, routing to appropriate backend.
 
         Args:
-            pattern: Glob pattern (supports **, *, ?, [], {})
-            case_sensitive: Whether pattern matching is case-sensitive
+            file_path: Absolute file path.
+            old_string: String to find and replace.
+            new_string: Replacement string.
+            replace_all: If True, replace all occurrences.
 
         Returns:
-            List of FileInfo objects from all backends
+            Success message or Command object, or error message on failure.
         """
-        all_results = []
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        res = backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
+        if res.files_update:
+            try:
+                runtime = getattr(self.default, "runtime", None)
+                if runtime is not None:
+                    state = runtime.state
+                    files = state.get("files", {})
+                    files.update(res.files_update)
+                    state["files"] = files
+            except Exception:
+                pass
+        return res
 
-        # Query default backend
-        all_results.extend(self.default.glob_info(pattern, case_sensitive))
-
-        # Query routed backends
-        for prefix, backend in self.routes.items():
-            results = backend.glob_info(pattern, case_sensitive)
-            all_results.extend(results)
-
-        # Deduplicate by path
-        seen = set()
-        unique_results = []
-        for item in all_results:
-            if item.path not in seen:
-                seen.add(item.path)
-                unique_results.append(item)
-
-        return sorted(unique_results, key=lambda x: x.path)
-
-    def grep_raw(
+    async def aedit(
         self,
-        pattern: str,
-        file_pattern: str = "**/*",
-        is_regex: bool = False,
-        case_sensitive: bool = True,
-        max_results: int = 100,
-    ) -> list[GrepMatch]:
-        """Search for pattern in files.
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        """Async version of edit."""
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        res = await backend.aedit(stripped_key, old_string, new_string, replace_all=replace_all)
+        if res.files_update:
+            try:
+                runtime = getattr(self.default, "runtime", None)
+                if runtime is not None:
+                    state = runtime.state
+                    files = state.get("files", {})
+                    files.update(res.files_update)
+                    state["files"] = files
+            except Exception:
+                pass
+        return res
 
-        For composite backend, this queries all backends and merges results.
+    def execute(
+        self,
+        command: str,
+    ) -> ExecuteResponse:
+        """Execute a command via the default backend.
+
+        Execution is not path-specific, so it always delegates to the default backend.
+        The default backend must implement SandboxBackendProtocol for this to work.
 
         Args:
-            pattern: Search pattern (literal string or regex)
-            file_pattern: Glob pattern for files to search
-            is_regex: Whether pattern is a regex
-            case_sensitive: Whether search is case-sensitive
-            max_results: Maximum number of matches to return
+            command: Full shell command string to execute.
 
         Returns:
-            List of GrepMatch objects from all backends
+            ExecuteResponse with combined output, exit code, and truncation flag.
+
+        Raises:
+            NotImplementedError: If default backend doesn't support execution.
         """
-        all_results = []
+        if isinstance(self.default, SandboxBackendProtocol):
+            return self.default.execute(command)
 
-        # Query default backend
-        results = self.default.grep_raw(
-            pattern, file_pattern, is_regex, case_sensitive, max_results
+        # This shouldn't be reached if the runtime check in the execute tool works correctly,
+        # but we include it as a safety fallback.
+        raise NotImplementedError(
+            "Default backend doesn't support command execution (SandboxBackendProtocol). "
+            "To enable execution, provide a default backend that implements SandboxBackendProtocol."
         )
-        all_results.extend(results)
 
-        if len(all_results) >= max_results:
-            return all_results[:max_results]
+    async def aexecute(
+        self,
+        command: str,
+    ) -> ExecuteResponse:
+        """Async version of execute."""
+        if isinstance(self.default, SandboxBackendProtocol):
+            return await self.default.aexecute(command)
 
-        # Query routed backends
-        for prefix, backend in self.routes.items():
-            remaining = max_results - len(all_results)
-            if remaining <= 0:
-                break
-
-            results = backend.grep_raw(
-                pattern, file_pattern, is_regex, case_sensitive, remaining
-            )
-            all_results.extend(results)
-
-        return all_results[:max_results]
+        # This shouldn't be reached if the runtime check in the execute tool works correctly,
+        # but we include it as a safety fallback.
+        raise NotImplementedError(
+            "Default backend doesn't support command execution (SandboxBackendProtocol). "
+            "To enable execution, provide a default backend that implements SandboxBackendProtocol."
+        )
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        """Upload files to appropriate backends based on paths.
+        """Upload multiple files, batching by backend for efficiency.
+
+        Groups files by their target backend, calls each backend's upload_files
+        once with all files for that backend, then merges results in original order.
 
         Args:
-            files: List of (path, content) tuples
+            files: List of (path, content) tuples to upload.
 
         Returns:
-            List of FileUploadResponse objects with status for each file
+            List of FileUploadResponse objects, one per input file.
+            Response order matches input order.
         """
-        # Group files by backend
-        backend_files: dict[BackendProtocol, list[tuple[str, bytes]]] = {}
-        for path, content in files:
-            backend = self._get_backend(path)
-            if backend not in backend_files:
-                backend_files[backend] = []
-            backend_files[backend].append((path, content))
+        # Pre-allocate result list
+        results: list[FileUploadResponse | None] = [None] * len(files)
 
-        # Upload to each backend
-        all_results = []
-        for backend, backend_file_list in backend_files.items():
-            results = backend.upload_files(backend_file_list)
-            all_results.extend(results)
+        # Group files by backend, tracking original indices
+        from collections import defaultdict
 
-        return all_results
+        backend_batches: dict[BackendProtocol, list[tuple[int, str, bytes]]] = defaultdict(list)
 
-    async def aupload_files(
-        self, files: list[tuple[str, bytes]]
-    ) -> list[FileUploadResponse]:
-        return await asyncio.to_thread(self.upload_files, files)
+        for idx, (path, content) in enumerate(files):
+            backend, stripped_path = self._get_backend_and_key(path)
+            backend_batches[backend].append((idx, stripped_path, content))
+
+        # Process each backend's batch
+        for backend, batch in backend_batches.items():
+            # Extract data for backend call
+            indices, stripped_paths, contents = zip(*batch, strict=False)
+            batch_files = list(zip(stripped_paths, contents, strict=False))
+
+            # Call backend once with all its files
+            batch_responses = backend.upload_files(batch_files)
+
+            # Place responses at original indices with original paths
+            for i, orig_idx in enumerate(indices):
+                results[orig_idx] = FileUploadResponse(
+                    path=files[orig_idx][0],  # Original path
+                    error=batch_responses[i].error if i < len(batch_responses) else None,
+                )
+
+        return results  # type: ignore[return-value]
+
+    async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        """Async version of upload_files."""
+        # Pre-allocate result list
+        results: list[FileUploadResponse | None] = [None] * len(files)
+
+        # Group files by backend, tracking original indices
+        backend_batches: dict[BackendProtocol, list[tuple[int, str, bytes]]] = defaultdict(list)
+
+        for idx, (path, content) in enumerate(files):
+            backend, stripped_path = self._get_backend_and_key(path)
+            backend_batches[backend].append((idx, stripped_path, content))
+
+        # Process each backend's batch
+        for backend, batch in backend_batches.items():
+            # Extract data for backend call
+            indices, stripped_paths, contents = zip(*batch, strict=False)
+            batch_files = list(zip(stripped_paths, contents, strict=False))
+
+            # Call backend once with all its files
+            batch_responses = await backend.aupload_files(batch_files)
+
+            # Place responses at original indices with original paths
+            for i, orig_idx in enumerate(indices):
+                results[orig_idx] = FileUploadResponse(
+                    path=files[orig_idx][0],  # Original path
+                    error=batch_responses[i].error if i < len(batch_responses) else None,
+                )
+
+        return results  # type: ignore[return-value]
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        """Download files from appropriate backends based on paths.
+        """Download multiple files, batching by backend for efficiency.
+
+        Groups paths by their target backend, calls each backend's download_files
+        once with all paths for that backend, then merges results in original order.
 
         Args:
-            paths: List of file paths to download
+            paths: List of file paths to download.
 
         Returns:
-            List of FileDownloadResponse objects with content for each file
+            List of FileDownloadResponse objects, one per input path.
+            Response order matches input order.
         """
-        # Group paths by backend
-        backend_paths: dict[BackendProtocol, list[str]] = {}
-        for path in paths:
-            backend = self._get_backend(path)
-            if backend not in backend_paths:
-                backend_paths[backend] = []
-            backend_paths[backend].append(path)
+        # Pre-allocate result list
+        results: list[FileDownloadResponse | None] = [None] * len(paths)
 
-        # Download from each backend
-        all_results = []
-        for backend, backend_path_list in backend_paths.items():
-            results = backend.download_files(backend_path_list)
-            all_results.extend(results)
+        backend_batches: dict[BackendProtocol, list[tuple[int, str]]] = defaultdict(list)
 
-        return all_results
+        for idx, path in enumerate(paths):
+            backend, stripped_path = self._get_backend_and_key(path)
+            backend_batches[backend].append((idx, stripped_path))
+
+        # Process each backend's batch
+        for backend, batch in backend_batches.items():
+            # Extract data for backend call
+            indices, stripped_paths = zip(*batch, strict=False)
+
+            # Call backend once with all its paths
+            batch_responses = backend.download_files(list(stripped_paths))
+
+            # Place responses at original indices with original paths
+            for i, orig_idx in enumerate(indices):
+                results[orig_idx] = FileDownloadResponse(
+                    path=paths[orig_idx],  # Original path
+                    content=batch_responses[i].content if i < len(batch_responses) else None,
+                    error=batch_responses[i].error if i < len(batch_responses) else None,
+                )
+
+        return results  # type: ignore[return-value]
 
     async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        return await asyncio.to_thread(self.download_files, paths)
+        """Async version of download_files."""
+        # Pre-allocate result list
+        results: list[FileDownloadResponse | None] = [None] * len(paths)
+
+        backend_batches: dict[BackendProtocol, list[tuple[int, str]]] = defaultdict(list)
+
+        for idx, path in enumerate(paths):
+            backend, stripped_path = self._get_backend_and_key(path)
+            backend_batches[backend].append((idx, stripped_path))
+
+        # Process each backend's batch
+        for backend, batch in backend_batches.items():
+            # Extract data for backend call
+            indices, stripped_paths = zip(*batch, strict=False)
+
+            # Call backend once with all its paths
+            batch_responses = await backend.adownload_files(list(stripped_paths))
+
+            # Place responses at original indices with original paths
+            for i, orig_idx in enumerate(indices):
+                results[orig_idx] = FileDownloadResponse(
+                    path=paths[orig_idx],  # Original path
+                    content=batch_responses[i].content if i < len(batch_responses) else None,
+                    error=batch_responses[i].error if i < len(batch_responses) else None,
+                )
+
+        return results  # type: ignore[return-value]

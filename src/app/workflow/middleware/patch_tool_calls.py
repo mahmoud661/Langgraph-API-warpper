@@ -11,9 +11,7 @@ from langgraph.types import Overwrite
 class PatchToolCallsMiddleware(AgentMiddleware):
     """Middleware to patch dangling tool calls in the messages history."""
 
-    def before_agent(
-        self, state: AgentState, runtime: Runtime[Any]
-    ) -> dict[str, Any] | None:  # noqa: ARG002
+    def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:  # noqa: ARG002
         """Before the agent runs, handle dangling tool calls from any AIMessage."""
         messages = state["messages"]
         if not messages or len(messages) == 0:
@@ -26,12 +24,7 @@ class PatchToolCallsMiddleware(AgentMiddleware):
             if msg.type == "ai" and msg.tool_calls:
                 for tool_call in msg.tool_calls:
                     corresponding_tool_msg = next(
-                        (
-                            msg
-                            for msg in messages[i:]
-                            if msg.type == "tool"
-                            and msg.tool_call_id == tool_call["id"]
-                        ),
+                        (msg for msg in messages[i:] if msg.type == "tool" and msg.tool_call_id == tool_call["id"]),
                         None,
                     )
                     if corresponding_tool_msg is None:

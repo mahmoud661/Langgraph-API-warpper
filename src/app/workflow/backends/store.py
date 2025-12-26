@@ -1,215 +1,305 @@
-"""Store backend for persistent file storage using LangGraph Store."""
+"""StoreBackend: Adapter for LangGraph's BaseStore (persistent, cross-thread)."""
 
-import asyncio
-import json
-import re
 from typing import Any
 
-from langchain_core.stores import BaseStore
-from wcmatch import glob as wcglob
+from langgraph.config import get_config
+from langgraph.store.base import BaseStore, Item
 
-from .protocol import (
+from deepagents.backends.protocol import (
     BackendProtocol,
     EditResult,
+    FileDownloadResponse,
     FileInfo,
-    FileOperationError,
+    FileUploadResponse,
     GrepMatch,
     WriteResult,
-    FileUploadResponse,
-    FileDownloadResponse,
+)
+from deepagents.backends.utils import (
+    _glob_search_files,
+    create_file_data,
+    file_data_to_string,
+    format_read_response,
+    grep_matches_from_files,
+    perform_string_replacement,
+    update_file_data,
 )
 
 
 class StoreBackend(BackendProtocol):
-    """Backend that stores files persistently using LangGraph Store."""
+    """Backend that stores files in LangGraph's BaseStore (persistent).
 
-    def __init__(self, store: BaseStore, namespace: tuple[str, ...] = ("files",)):
-        """Initialize store backend.
+    Uses LangGraph's Store for persistent, cross-conversation storage.
+    Files are organized via namespaces and persist across all threads.
+
+    The namespace can include an optional assistant_id for multi-agent isolation.
+    """
+
+    def __init__(self, runtime: "ToolRuntime"):
+        """Initialize StoreBackend with runtime.
 
         Args:
-            store: LangGraph store instance for persistence
-            namespace: Namespace tuple for organizing files in store
+            runtime: The ToolRuntime instance providing store access and configuration.
         """
-        self.store = store
-        self.namespace = namespace
+        self.runtime = runtime
 
-    def _get_key(self, file_path: str) -> str:
-        """Convert file path to store key."""
-        return f"file:{file_path}"
-
-    def _get_metadata_key(self, file_path: str) -> str:
-        """Convert file path to metadata store key."""
-        return f"meta:{file_path}"
-
-    def _list_all_files(self) -> list[str]:
-        """List all file paths in store."""
-        try:
-            # Get all keys with file: prefix
-            all_items = self.store.mget(self.namespace, [])
-            file_paths = []
-            for key, _ in all_items:
-                if key.startswith("file:"):
-                    file_paths.append(key[5:])  # Remove "file:" prefix
-            return sorted(file_paths)
-        except Exception:
-            return []
-
-    def ls_info(self, directory: str = ".") -> list[FileInfo]:
-        """List files in directory with metadata.
-
-        Args:
-            directory: Directory path
+    def _get_store(self) -> BaseStore:
+        """Get the store instance.
 
         Returns:
-            List of FileInfo objects for each file/directory
+            BaseStore instance from the runtime.
+
+        Raises:
+            ValueError: If no store is available in the runtime.
         """
-        all_files = self._list_all_files()
+        store = self.runtime.store
+        if store is None:
+            msg = "Store is required but not available in runtime"
+            raise ValueError(msg)
+        return store
 
-        # Normalize directory path
-        if directory == ".":
-            dir_prefix = ""
-        else:
-            dir_prefix = directory.rstrip("/") + "/"
+    def _get_namespace(self) -> tuple[str, ...]:
+        """Get the namespace for store operations.
 
-        # Find immediate children
-        children = set()
-        for file_path in all_files:
-            if not file_path.startswith(dir_prefix):
+        Preference order:
+        1) Use `self.runtime.config` if present (tests pass this explicitly).
+        2) Fallback to `langgraph.config.get_config()` if available.
+        3) Default to ("filesystem",).
+
+        If an assistant_id is available in the config metadata, return
+        (assistant_id, "filesystem") to provide per-assistant isolation.
+        """
+        namespace = "filesystem"
+
+        # Prefer the runtime-provided config when present
+        runtime_cfg = getattr(self.runtime, "config", None)
+        if isinstance(runtime_cfg, dict):
+            assistant_id = runtime_cfg.get("metadata", {}).get("assistant_id")
+            if assistant_id:
+                return (assistant_id, namespace)
+            return (namespace,)
+
+        # Fallback to langgraph's context, but guard against errors when
+        # called outside of a runnable context
+        try:
+            cfg = get_config()
+        except Exception:
+            return (namespace,)
+
+        try:
+            assistant_id = cfg.get("metadata", {}).get("assistant_id")  # type: ignore[assignment]
+        except Exception:
+            assistant_id = None
+
+        if assistant_id:
+            return (assistant_id, namespace)
+        return (namespace,)
+
+    def _convert_store_item_to_file_data(self, store_item: Item) -> dict[str, Any]:
+        """Convert a store Item to FileData format.
+
+        Args:
+            store_item: The store Item containing file data.
+
+        Returns:
+            FileData dict with content, created_at, and modified_at fields.
+
+        Raises:
+            ValueError: If required fields are missing or have incorrect types.
+        """
+        if "content" not in store_item.value or not isinstance(store_item.value["content"], list):
+            msg = f"Store item does not contain valid content field. Got: {store_item.value.keys()}"
+            raise ValueError(msg)
+        if "created_at" not in store_item.value or not isinstance(store_item.value["created_at"], str):
+            msg = f"Store item does not contain valid created_at field. Got: {store_item.value.keys()}"
+            raise ValueError(msg)
+        if "modified_at" not in store_item.value or not isinstance(store_item.value["modified_at"], str):
+            msg = f"Store item does not contain valid modified_at field. Got: {store_item.value.keys()}"
+            raise ValueError(msg)
+        return {
+            "content": store_item.value["content"],
+            "created_at": store_item.value["created_at"],
+            "modified_at": store_item.value["modified_at"],
+        }
+
+    def _convert_file_data_to_store_value(self, file_data: dict[str, Any]) -> dict[str, Any]:
+        """Convert FileData to a dict suitable for store.put().
+
+        Args:
+            file_data: The FileData to convert.
+
+        Returns:
+            Dictionary with content, created_at, and modified_at fields.
+        """
+        return {
+            "content": file_data["content"],
+            "created_at": file_data["created_at"],
+            "modified_at": file_data["modified_at"],
+        }
+
+    def _search_store_paginated(
+        self,
+        store: BaseStore,
+        namespace: tuple[str, ...],
+        *,
+        query: str | None = None,
+        filter: dict[str, Any] | None = None,
+        page_size: int = 100,
+    ) -> list[Item]:
+        """Search store with automatic pagination to retrieve all results.
+
+        Args:
+            store: The store to search.
+            namespace: Hierarchical path prefix to search within.
+            query: Optional query for natural language search.
+            filter: Key-value pairs to filter results.
+            page_size: Number of items to fetch per page (default: 100).
+
+        Returns:
+            List of all items matching the search criteria.
+
+        Example:
+            ```python
+            store = _get_store(runtime)
+            namespace = _get_namespace()
+            all_items = _search_store_paginated(store, namespace)
+            ```
+        """
+        all_items: list[Item] = []
+        offset = 0
+        while True:
+            page_items = store.search(
+                namespace,
+                query=query,
+                filter=filter,
+                limit=page_size,
+                offset=offset,
+            )
+            if not page_items:
+                break
+            all_items.extend(page_items)
+            if len(page_items) < page_size:
+                break
+            offset += page_size
+
+        return all_items
+
+    def ls_info(self, path: str) -> list[FileInfo]:
+        """List files and directories in the specified directory (non-recursive).
+
+        Args:
+            path: Absolute path to directory.
+
+        Returns:
+            List of FileInfo-like dicts for files and directories directly in the directory.
+            Directories have a trailing / in their path and is_dir=True.
+        """
+        store = self._get_store()
+        namespace = self._get_namespace()
+
+        # Retrieve all items and filter by path prefix locally to avoid
+        # coupling to store-specific filter semantics
+        items = self._search_store_paginated(store, namespace)
+        infos: list[FileInfo] = []
+        subdirs: set[str] = set()
+
+        # Normalize path to have trailing slash for proper prefix matching
+        normalized_path = path if path.endswith("/") else path + "/"
+
+        for item in items:
+            # Check if file is in the specified directory or a subdirectory
+            if not str(item.key).startswith(normalized_path):
                 continue
 
-            relative = file_path[len(dir_prefix) :]
+            # Get the relative path after the directory
+            relative = str(item.key)[len(normalized_path) :]
+
+            # If relative path contains '/', it's in a subdirectory
             if "/" in relative:
-                # This is a subdirectory
-                subdir = relative.split("/")[0]
-                children.add((subdir, False))  # False = directory
-            else:
-                # This is a file
-                children.add((relative, True))  # True = file
+                # Extract the immediate subdirectory name
+                subdir_name = relative.split("/")[0]
+                subdirs.add(normalized_path + subdir_name + "/")
+                continue
 
-        results = []
-        for name, is_file in sorted(children):
-            full_path = f"{dir_prefix}{name}" if dir_prefix else name
+            # This is a file directly in the current directory
+            try:
+                fd = self._convert_store_item_to_file_data(item)
+            except ValueError:
+                continue
+            size = len("\n".join(fd.get("content", [])))
+            infos.append(
+                {
+                    "path": item.key,
+                    "is_dir": False,
+                    "size": int(size),
+                    "modified_at": fd.get("modified_at", ""),
+                }
+            )
 
-            if is_file:
-                # Get file size from metadata
-                try:
-                    meta_key = self._get_metadata_key(full_path)
-                    metadata = self.store.mget([self.namespace], [meta_key])
-                    size = metadata.get("size", 0) if metadata else 0
-                except Exception:
-                    size = 0
+        # Add directories to the results
+        for subdir in sorted(subdirs):
+            infos.append(
+                {
+                    "path": subdir,
+                    "is_dir": True,
+                    "size": 0,
+                    "modified_at": "",
+                }
+            )
 
-                results.append(
-                    FileInfo(
-                        path=full_path,
-                        is_file=True,
-                        size=size,
-                    )
-                )
-            else:
-                results.append(
-                    FileInfo(
-                        path=full_path,
-                        is_file=False,
-                        size=0,
-                    )
-                )
-
-        return results
+        infos.sort(key=lambda x: x.get("path", ""))
+        return infos
 
     def read(
         self,
         file_path: str,
-        start_line: int | None = None,
-        end_line: int | None = None,
-        page_size: int | None = None,
-        page: int | None = None,
+        offset: int = 0,
+        limit: int = 2000,
     ) -> str:
-        """Read file content with optional line range or pagination.
+        """Read file content with line numbers.
 
         Args:
-            file_path: Path to file
-            start_line: Starting line number (1-indexed, inclusive)
-            end_line: Ending line number (1-indexed, inclusive)
-            page_size: Number of lines per page
-            page: Page number (1-indexed)
+            file_path: Absolute file path.
+            offset: Line offset to start reading from (0-indexed).
+            limit: Maximum number of lines to read.
 
         Returns:
-            File content as string, or error message
+            Formatted file content with line numbers, or error message.
         """
+        store = self._get_store()
+        namespace = self._get_namespace()
+        item: Item | None = store.get(namespace, file_path)
+
+        if item is None:
+            return f"Error: File '{file_path}' not found"
+
         try:
-            key = self._get_key(file_path)
-            result = self.store.mget([self.namespace], [key])
+            file_data = self._convert_store_item_to_file_data(item)
+        except ValueError as e:
+            return f"Error: {e}"
 
-            if not result or key not in result:
-                return f"Error: File '{file_path}' not found"
-
-            content = result[key]
-            if not isinstance(content, str):
-                return f"Error: Invalid file content for '{file_path}'"
-
-            lines = content.splitlines(keepends=True)
-
-            # Handle pagination
-            if page_size is not None and page is not None:
-                start_idx = (page - 1) * page_size
-                end_idx = start_idx + page_size
-                selected_lines = lines[start_idx:end_idx]
-                return "".join(selected_lines)
-
-            # Handle line range
-            if start_line is not None or end_line is not None:
-                start_idx = (start_line - 1) if start_line else 0
-                end_idx = end_line if end_line else len(lines)
-                selected_lines = lines[start_idx:end_idx]
-                return "".join(selected_lines)
-
-            return content
-        except Exception as e:
-            return f"Error: {str(e)}"
+        return format_read_response(file_data, offset, limit)
 
     def write(
         self,
         file_path: str,
         content: str,
-        create_parents: bool = True,
     ) -> WriteResult:
-        """Write content to file.
-
-        Args:
-            file_path: Path to file
-            content: Content to write
-            create_parents: Whether to create parent directories (ignored for store)
-
-        Returns:
-            WriteResult with success status and metadata
+        """Create a new file with content.
+        Returns WriteResult. External storage sets files_update=None.
         """
-        try:
-            key = self._get_key(file_path)
-            meta_key = self._get_metadata_key(file_path)
+        store = self._get_store()
+        namespace = self._get_namespace()
 
-            # Store file content
-            self.store.mset([(self.namespace, key, content)])
+        # Check if file exists
+        existing = store.get(namespace, file_path)
+        if existing is not None:
+            return WriteResult(error=f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path.")
 
-            # Store metadata
-            lines_written = len(content.splitlines())
-            metadata = {
-                "size": len(content),
-                "lines": lines_written,
-            }
-            self.store.mset([(self.namespace, meta_key, json.dumps(metadata))])
-
-            return WriteResult(
-                path=file_path,
-                lines_written=lines_written,
-                error=None,
-            )
-        except Exception:
-            return WriteResult(
-                path=file_path,
-                lines_written=0,
-                error="permission_denied",
-            )
+        # Create new file
+        file_data = create_file_data(content)
+        store_value = self._convert_file_data_to_store_value(file_data)
+        store.put(namespace, file_path, store_value)
+        return WriteResult(path=file_path, files_update=None)
 
     def edit(
         self,
@@ -218,223 +308,135 @@ class StoreBackend(BackendProtocol):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        """Edit file by replacing old_string with new_string.
-
-        Args:
-            file_path: Path to file
-            old_string: String to find and replace
-            new_string: Replacement string
-            replace_all: If True, replace all occurrences; if False, replace first only
-
-        Returns:
-            EditResult with number of replacements and status
+        """Edit a file by replacing string occurrences.
+        Returns EditResult. External storage sets files_update=None.
         """
+        store = self._get_store()
+        namespace = self._get_namespace()
+
+        # Get existing file
+        item = store.get(namespace, file_path)
+        if item is None:
+            return EditResult(error=f"Error: File '{file_path}' not found")
+
         try:
-            # Read existing content
-            content = self.read(file_path)
-            if content.startswith("Error:"):
-                return EditResult(
-                    path=file_path,
-                    replacements=0,
-                    error="file_not_found",
-                )
+            file_data = self._convert_store_item_to_file_data(item)
+        except ValueError as e:
+            return EditResult(error=f"Error: {e}")
 
-            if old_string not in content:
-                return EditResult(
-                    path=file_path,
-                    replacements=0,
-                    error="pattern_not_found",
-                )
+        content = file_data_to_string(file_data)
+        result = perform_string_replacement(content, old_string, new_string, replace_all)
 
-            if replace_all:
-                new_content = content.replace(old_string, new_string)
-                replacements = content.count(old_string)
-            else:
-                new_content = content.replace(old_string, new_string, 1)
-                replacements = 1
+        if isinstance(result, str):
+            return EditResult(error=result)
 
-            # Write updated content
-            result = self.write(file_path, new_content)
-            if result.error:
-                return EditResult(
-                    path=file_path,
-                    replacements=0,
-                    error=result.error,
-                )
+        new_content, occurrences = result
+        new_file_data = update_file_data(file_data, new_content)
 
-            return EditResult(
-                path=file_path,
-                replacements=replacements,
-                error=None,
-            )
-        except Exception:
-            return EditResult(
-                path=file_path,
-                replacements=0,
-                error="permission_denied",
-            )
+        # Update file in store
+        store_value = self._convert_file_data_to_store_value(new_file_data)
+        store.put(namespace, file_path, store_value)
+        return EditResult(path=file_path, files_update=None, occurrences=int(occurrences))
 
-    def glob_info(self, pattern: str, case_sensitive: bool = True) -> list[FileInfo]:
-        """Find files matching glob pattern.
-
-        Args:
-            pattern: Glob pattern (supports **, *, ?, [], {})
-            case_sensitive: Whether pattern matching is case-sensitive
-
-        Returns:
-            List of FileInfo objects for matching files
-        """
-        try:
-            all_files = self._list_all_files()
-
-            flags = wcglob.GLOBSTAR | wcglob.BRACE
-            if not case_sensitive:
-                flags |= wcglob.IGNORECASE
-
-            results = []
-            for file_path in all_files:
-                if wcglob.globmatch(file_path, pattern, flags=flags):
-                    # Get file size from metadata
-                    try:
-                        meta_key = self._get_metadata_key(file_path)
-                        metadata_json = self.store.mget([self.namespace], [meta_key])
-                        if metadata_json and meta_key in metadata_json:
-                            metadata = json.loads(metadata_json[meta_key])
-                            size = metadata.get("size", 0)
-                        else:
-                            size = 0
-                    except Exception:
-                        size = 0
-
-                    results.append(
-                        FileInfo(
-                            path=file_path,
-                            is_file=True,
-                            size=size,
-                        )
-                    )
-
-            return results
-        except Exception:
-            return []
+    # Removed legacy grep() convenience to keep lean surface
 
     def grep_raw(
         self,
         pattern: str,
-        file_pattern: str = "**/*",
-        is_regex: bool = False,
-        case_sensitive: bool = True,
-        max_results: int = 100,
-    ) -> list[GrepMatch]:
-        """Search for pattern in files.
+        path: str = "/",
+        glob: str | None = None,
+    ) -> list[GrepMatch] | str:
+        store = self._get_store()
+        namespace = self._get_namespace()
+        items = self._search_store_paginated(store, namespace)
+        files: dict[str, Any] = {}
+        for item in items:
+            try:
+                files[item.key] = self._convert_store_item_to_file_data(item)
+            except ValueError:
+                continue
+        return grep_matches_from_files(files, pattern, path, glob)
 
-        Args:
-            pattern: Search pattern (literal string or regex)
-            file_pattern: Glob pattern for files to search
-            is_regex: Whether pattern is a regex
-            case_sensitive: Whether search is case-sensitive
-            max_results: Maximum number of matches to return
-
-        Returns:
-            List of GrepMatch objects with file paths and matching lines
-        """
-        try:
-            # Get files matching the pattern
-            files = self.glob_info(file_pattern, case_sensitive=True)
-
-            # Compile search pattern
-            if is_regex:
-                flags = 0 if case_sensitive else re.IGNORECASE
-                search_re = re.compile(pattern, flags)
-            else:
-                flags = 0 if case_sensitive else re.IGNORECASE
-                escaped_pattern = re.escape(pattern)
-                search_re = re.compile(escaped_pattern, flags)
-
-            results = []
-            for file_info in files:
-                if len(results) >= max_results:
-                    break
-
-                try:
-                    content = self.read(file_info.path)
-                    if content.startswith("Error:"):
-                        continue
-
-                    lines = content.splitlines()
-                    for line_num, line in enumerate(lines, start=1):
-                        if len(results) >= max_results:
-                            break
-
-                        if search_re.search(line):
-                            results.append(
-                                GrepMatch(
-                                    path=file_info.path,
-                                    line_number=line_num,
-                                    line_content=line,
-                                )
-                            )
-                except Exception:
-                    continue
-
-            return results
-        except Exception:
+    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+        store = self._get_store()
+        namespace = self._get_namespace()
+        items = self._search_store_paginated(store, namespace)
+        files: dict[str, Any] = {}
+        for item in items:
+            try:
+                files[item.key] = self._convert_store_item_to_file_data(item)
+            except ValueError:
+                continue
+        result = _glob_search_files(files, pattern, path)
+        if result == "No files found":
             return []
+        paths = result.split("\n")
+        infos: list[FileInfo] = []
+        for p in paths:
+            fd = files.get(p)
+            size = len("\n".join(fd.get("content", []))) if fd else 0
+            infos.append(
+                {
+                    "path": p,
+                    "is_dir": False,
+                    "size": int(size),
+                    "modified_at": fd.get("modified_at", "") if fd else "",
+                }
+            )
+        return infos
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        """Upload files to store.
+        """Upload multiple files to the store.
 
         Args:
-            files: List of (path, content) tuples
+            files: List of (path, content) tuples where content is bytes.
 
         Returns:
-            List of FileUploadResponse objects with status for each file
+            List of FileUploadResponse objects, one per input file.
+            Response order matches input order.
         """
-        results = []
-        for path, content in files:
-            try:
-                decoded = content.decode("utf-8")
-                result = self.write(path, decoded)
-                if result.error:
-                    results.append(
-                        FileUploadResponse(path=path, error="permission_denied")
-                    )
-                else:
-                    results.append(FileUploadResponse(path=path, error=None))
-            except Exception:
-                results.append(FileUploadResponse(path=path, error="invalid_path"))
-        return results
+        store = self._get_store()
+        namespace = self._get_namespace()
+        responses: list[FileUploadResponse] = []
 
-    async def aupload_files(
-        self, files: list[tuple[str, bytes]]
-    ) -> list[FileUploadResponse]:
-        return await asyncio.to_thread(self.upload_files, files)
+        for path, content in files:
+            content_str = content.decode("utf-8")
+            # Create file data
+            file_data = create_file_data(content_str)
+            store_value = self._convert_file_data_to_store_value(file_data)
+
+            # Store the file
+            store.put(namespace, path, store_value)
+            responses.append(FileUploadResponse(path=path, error=None))
+
+        return responses
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        """Download files from store.
+        """Download multiple files from the store.
 
         Args:
-            paths: List of file paths to download
+            paths: List of file paths to download.
 
         Returns:
-            List of FileDownloadResponse objects with content for each file
+            List of FileDownloadResponse objects, one per input path.
+            Response order matches input order.
         """
-        results = []
-        for path in paths:
-            content_str = self.read(path)
-            if content_str.startswith("Error"):
-                results.append(
-                    FileDownloadResponse(
-                        path=path, content=None, error="file_not_found"
-                    )
-                )
-            else:
-                results.append(
-                    FileDownloadResponse(
-                        path=path, content=content_str.encode("utf-8"), error=None
-                    )
-                )
-        return results
+        store = self._get_store()
+        namespace = self._get_namespace()
+        responses: list[FileDownloadResponse] = []
 
-    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        return await asyncio.to_thread(self.download_files, paths)
+        for path in paths:
+            item = store.get(namespace, path)
+
+            if item is None:
+                responses.append(FileDownloadResponse(path=path, content=None, error="file_not_found"))
+                continue
+
+            file_data = self._convert_store_item_to_file_data(item)
+            # Convert file data to bytes
+            content_str = file_data_to_string(file_data)
+            content_bytes = content_str.encode("utf-8")
+
+            responses.append(FileDownloadResponse(path=path, content=content_bytes, error=None))
+
+        return responses

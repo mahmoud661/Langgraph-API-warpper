@@ -1,110 +1,134 @@
-import fnmatch
-from datetime import datetime
-from pathlib import Path
-from typing import Any
+"""StateBackend: Store files in LangGraph agent state (ephemeral)."""
 
-from langchain.tools import ToolRuntime
-from wcmatch import glob as wcglob
+from typing import TYPE_CHECKING
 
-from src.app.workflow.backends.protocol import (
-    BackendProtocol,
-    EditResult,
-    FileInfo,
-    GrepMatch,
-    WriteResult,
+from deepagents.backends.protocol import BackendProtocol, EditResult, FileInfo, GrepMatch, WriteResult
+from deepagents.backends.utils import (
+    _glob_search_files,
+    create_file_data,
+    file_data_to_string,
+    format_read_response,
+    grep_matches_from_files,
+    perform_string_replacement,
+    update_file_data,
 )
+
+if TYPE_CHECKING:
+    from langchain.tools import ToolRuntime
 
 
 class StateBackend(BackendProtocol):
-    def __init__(self, runtime: ToolRuntime):
+    """Backend that stores files in agent state (ephemeral).
+
+    Uses LangGraph's state management and checkpointing. Files persist within
+    a conversation thread but not across threads. State is automatically
+    checkpointed after each agent step.
+
+    Special handling: Since LangGraph state must be updated via Command objects
+    (not direct mutation), operations return Command objects instead of None.
+    This is indicated by the uses_state=True flag.
+    """
+
+    def __init__(self, runtime: "ToolRuntime"):
+        """Initialize StateBackend with runtime."""
         self.runtime = runtime
 
-    def _get_files(self) -> dict[str, Any]:
-        return self.runtime.state.get("files", {})
-
-    def _validate_path(self, path: str) -> str:
-        if not path.startswith("/"):
-            return f"Error: Path must be absolute (start with /), got: {path}"
-        return path
-
     def ls_info(self, path: str) -> list[FileInfo]:
-        validated = self._validate_path(path)
-        if isinstance(validated, str) and validated.startswith("Error"):
-            return []
+        """List files and directories in the specified directory (non-recursive).
 
-        files = self._get_files()
-        path_normalized = path.rstrip("/")
+        Args:
+            path: Absolute path to directory.
 
-        results: list[FileInfo] = []
-        seen_dirs = set()
+        Returns:
+            List of FileInfo-like dicts for files and directories directly in the directory.
+            Directories have a trailing / in their path and is_dir=True.
+        """
+        files = self.runtime.state.get("files", {})
+        infos: list[FileInfo] = []
+        subdirs: set[str] = set()
 
-        for file_path in files.keys():
-            if not file_path.startswith(path_normalized + "/"):
+        # Normalize path to have trailing slash for proper prefix matching
+        normalized_path = path if path.endswith("/") else path + "/"
+
+        for k, fd in files.items():
+            # Check if file is in the specified directory or a subdirectory
+            if not k.startswith(normalized_path):
                 continue
 
-            relative = file_path[len(path_normalized) + 1 :]
+            # Get the relative path after the directory
+            relative = k[len(normalized_path) :]
+
+            # If relative path contains '/', it's in a subdirectory
             if "/" in relative:
-                dir_name = relative.split("/")[0]
-                if dir_name not in seen_dirs:
-                    seen_dirs.add(dir_name)
-                    results.append(
-                        FileInfo(
-                            path=f"{path_normalized}/{dir_name}",
-                            is_dir=True,
-                        )
-                    )
-            else:
-                file_data = files[file_path]
-                results.append(
-                    FileInfo(
-                        path=file_path,
-                        is_dir=False,
-                        size=len("\n".join(file_data.get("content", []))),
-                        modified_at=file_data.get("modified_at", ""),
-                    )
-                )
+                # Extract the immediate subdirectory name
+                subdir_name = relative.split("/")[0]
+                subdirs.add(normalized_path + subdir_name + "/")
+                continue
 
-        return sorted(results, key=lambda x: x["path"])
+            # This is a file directly in the current directory
+            size = len("\n".join(fd.get("content", [])))
+            infos.append(
+                {
+                    "path": k,
+                    "is_dir": False,
+                    "size": int(size),
+                    "modified_at": fd.get("modified_at", ""),
+                }
+            )
 
-    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
-        validated = self._validate_path(file_path)
-        if isinstance(validated, str) and validated.startswith("Error"):
-            return validated
+        # Add directories to the results
+        for subdir in sorted(subdirs):
+            infos.append(
+                {
+                    "path": subdir,
+                    "is_dir": True,
+                    "size": 0,
+                    "modified_at": "",
+                }
+            )
 
-        files = self._get_files()
-        if file_path not in files:
-            return f"Error: File not found: {file_path}"
+        infos.sort(key=lambda x: x.get("path", ""))
+        return infos
 
-        file_data = files[file_path]
-        content_lines = file_data.get("content", [])
+    def read(
+        self,
+        file_path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> str:
+        """Read file content with line numbers.
 
-        selected_lines = content_lines[offset : offset + limit]
-        if not selected_lines:
-            return f"File {file_path} is empty or offset is beyond file length"
+        Args:
+            file_path: Absolute file path.
+            offset: Line offset to start reading from (0-indexed).
+            limit: Maximum number of lines to read.
 
-        numbered_lines = [
-            f"{i + offset + 1}\t{line[:2000]}" for i, line in enumerate(selected_lines)
-        ]
-        return "\n".join(numbered_lines)
+        Returns:
+            Formatted file content with line numbers, or error message.
+        """
+        files = self.runtime.state.get("files", {})
+        file_data = files.get(file_path)
 
-    def write(self, file_path: str, content: str) -> WriteResult:
-        validated = self._validate_path(file_path)
-        if isinstance(validated, str) and validated.startswith("Error"):
-            return WriteResult(error=validated)
+        if file_data is None:
+            return f"Error: File '{file_path}' not found"
 
-        files = self._get_files()
+        return format_read_response(file_data, offset, limit)
+
+    def write(
+        self,
+        file_path: str,
+        content: str,
+    ) -> WriteResult:
+        """Create a new file with content.
+        Returns WriteResult with files_update to update LangGraph state.
+        """
+        files = self.runtime.state.get("files", {})
+
         if file_path in files:
-            return WriteResult(error=f"Error: File already exists: {file_path}")
+            return WriteResult(error=f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path.")
 
-        now = datetime.utcnow().isoformat()
-        file_data = {
-            "content": content.splitlines(),
-            "created_at": now,
-            "modified_at": now,
-        }
-
-        files_update = {file_path: file_data}
-        return WriteResult(path=file_path, files_update=files_update)
+        new_file_data = create_file_data(content)
+        return WriteResult(path=file_path, files_update={file_path: new_file_data})
 
     def edit(
         self,
@@ -113,77 +137,51 @@ class StateBackend(BackendProtocol):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        validated = self._validate_path(file_path)
-        if isinstance(validated, str) and validated.startswith("Error"):
-            return EditResult(error=validated)
+        """Edit a file by replacing string occurrences.
+        Returns EditResult with files_update and occurrences.
+        """
+        files = self.runtime.state.get("files", {})
+        file_data = files.get(file_path)
 
-        files = self._get_files()
-        if file_path not in files:
-            return EditResult(error=f"Error: File not found: {file_path}")
+        if file_data is None:
+            return EditResult(error=f"Error: File '{file_path}' not found")
 
-        file_data = files[file_path].copy()
-        content = "\n".join(file_data.get("content", []))
+        content = file_data_to_string(file_data)
+        result = perform_string_replacement(content, old_string, new_string, replace_all)
 
-        if old_string == new_string:
-            return EditResult(error="Error: old_string and new_string are identical")
+        if isinstance(result, str):
+            return EditResult(error=result)
 
-        if replace_all:
-            occurrences = content.count(old_string)
-            if occurrences == 0:
-                return EditResult(error=f"Error: String not found in file: {file_path}")
-            new_content = content.replace(old_string, new_string)
-        else:
-            occurrences = content.count(old_string)
-            if occurrences == 0:
-                return EditResult(error=f"Error: String not found in file: {file_path}")
-            if occurrences > 1:
-                return EditResult(
-                    error=f"Error: String appears {occurrences} times. Use replace_all=True or provide more context"
-                )
-            new_content = content.replace(old_string, new_string, 1)
-
-        file_data["content"] = new_content.splitlines()
-        file_data["modified_at"] = datetime.utcnow().isoformat()
-
-        files_update = {file_path: file_data}
-        return EditResult(
-            path=file_path, files_update=files_update, occurrences=occurrences
-        )
-
-    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
-        files = self._get_files()
-        results: list[FileInfo] = []
-
-        for file_path in files.keys():
-            if wcglob.globmatch(file_path, pattern, flags=wcglob.GLOBSTAR):
-                file_data = files[file_path]
-                results.append(
-                    FileInfo(
-                        path=file_path,
-                        is_dir=False,
-                        size=len("\n".join(file_data.get("content", []))),
-                        modified_at=file_data.get("modified_at", ""),
-                    )
-                )
-
-        return sorted(results, key=lambda x: x["path"])
+        new_content, occurrences = result
+        new_file_data = update_file_data(file_data, new_content)
+        return EditResult(path=file_path, files_update={file_path: new_file_data}, occurrences=int(occurrences))
 
     def grep_raw(
-        self, pattern: str, path: str | None = None, glob: str | None = None
+        self,
+        pattern: str,
+        path: str = "/",
+        glob: str | None = None,
     ) -> list[GrepMatch] | str:
-        files = self._get_files()
-        matches: list[GrepMatch] = []
+        files = self.runtime.state.get("files", {})
+        return grep_matches_from_files(files, pattern, path, glob)
 
-        for file_path, file_data in files.items():
-            if path and not file_path.startswith(path):
-                continue
-
-            if glob and not fnmatch.fnmatch(file_path, glob):
-                continue
-
-            content_lines = file_data.get("content", [])
-            for line_num, line in enumerate(content_lines, 1):
-                if pattern in line:
-                    matches.append(GrepMatch(path=file_path, line=line_num, text=line))
-
-        return matches
+    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+        """Get FileInfo for files matching glob pattern."""
+        files = self.runtime.state.get("files", {})
+        result = _glob_search_files(files, pattern, path)
+        if result == "No files found":
+            return []
+        paths = result.split("\n")
+        infos: list[FileInfo] = []
+        for p in paths:
+            fd = files.get(p)
+            size = len("\n".join(fd.get("content", []))) if fd else 0
+            infos.append(
+                {
+                    "path": p,
+                    "is_dir": False,
+                    "size": int(size),
+                    "modified_at": fd.get("modified_at", "") if fd else "",
+                }
+            )
+        return infos
