@@ -1,5 +1,3 @@
-"""StateBackend: Store files in LangGraph agent state (ephemeral)."""
-
 from typing import TYPE_CHECKING
 
 from .protocol import BackendProtocol, EditResult, FileInfo, GrepMatch, WriteResult
@@ -18,31 +16,12 @@ if TYPE_CHECKING:
 
 
 class StateBackend(BackendProtocol):
-    """Backend that stores files in agent state (ephemeral).
-
-    Uses LangGraph's state management and checkpointing. Files persist within
-    a conversation thread but not across threads. State is automatically
-    checkpointed after each agent step.
-
-    Special handling: Since LangGraph state must be updated via Command objects
-    (not direct mutation), operations return Command objects instead of None.
-    This is indicated by the uses_state=True flag.
-    """
 
     def __init__(self, runtime: "ToolRuntime"):
-        """Initialize StateBackend with runtime."""
         self.runtime = runtime
 
     def ls_info(self, path: str) -> list[FileInfo]:
-        """List files and directories in the specified directory (non-recursive).
 
-        Args:
-            path: Absolute path to directory.
-
-        Returns:
-            List of FileInfo-like dicts for files and directories directly in the directory.
-            Directories have a trailing / in their path and is_dir=True.
-        """
         files = self.runtime.state.get("files", {})
         infos: list[FileInfo] = []
         subdirs: set[str] = set()
@@ -96,16 +75,7 @@ class StateBackend(BackendProtocol):
         offset: int = 0,
         limit: int = 2000,
     ) -> str:
-        """Read file content with line numbers.
 
-        Args:
-            file_path: Absolute file path.
-            offset: Line offset to start reading from (0-indexed).
-            limit: Maximum number of lines to read.
-
-        Returns:
-            Formatted file content with line numbers, or error message.
-        """
         files = self.runtime.state.get("files", {})
         file_data = files.get(file_path)
 
@@ -119,9 +89,7 @@ class StateBackend(BackendProtocol):
         file_path: str,
         content: str,
     ) -> WriteResult:
-        """Create a new file with content.
-        Returns WriteResult with files_update to update LangGraph state.
-        """
+
         files = self.runtime.state.get("files", {})
 
         if file_path in files:
@@ -139,9 +107,7 @@ class StateBackend(BackendProtocol):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        """Edit a file by replacing string occurrences.
-        Returns EditResult with files_update and occurrences.
-        """
+  
         files = self.runtime.state.get("files", {})
         file_data = files.get(file_path)
 

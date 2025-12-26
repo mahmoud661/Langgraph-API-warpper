@@ -1,10 +1,3 @@
-"""Base sandbox implementation with execute() as the only abstract method.
-
-This module provides a base class that implements all SandboxBackendProtocol
-methods using shell commands executed via execute(). Concrete implementations
-only need to implement the execute() method.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -161,7 +154,6 @@ class BaseSandbox(SandboxBackendProtocol, ABC):
         ...
 
     def ls_info(self, path: str) -> list[FileInfo]:
-        """Structured listing with file metadata using os.scandir."""
         cmd = f"""python3 -c "
 import os
 import json
@@ -202,7 +194,6 @@ except PermissionError:
         offset: int = 0,
         limit: int = 2000,
     ) -> str:
-        """Read file content with line numbers using a single shell command."""
         # Use template for reading file with offset and limit
         cmd = _READ_COMMAND_TEMPLATE.format(
             file_path=file_path, offset=offset, limit=limit
@@ -222,7 +213,6 @@ except PermissionError:
         file_path: str,
         content: str,
     ) -> WriteResult:
-        """Create a new file. Returns WriteResult; error populated on failure."""
         # Encode content as base64 to avoid any escaping issues
         content_b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
 
@@ -247,7 +237,6 @@ except PermissionError:
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        """Edit a file by replacing string occurrences. Returns EditResult."""
         # Encode strings as base64 to avoid any escaping issues
         old_b64 = base64.b64encode(old_string.encode("utf-8")).decode("ascii")
         new_b64 = base64.b64encode(new_string.encode("utf-8")).decode("ascii")
@@ -321,7 +310,6 @@ except PermissionError:
         return matches
 
     def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
-        """Structured glob matching returning FileInfo dicts."""
         # Encode pattern and path as base64 to avoid escaping issues
         pattern_b64 = base64.b64encode(pattern.encode("utf-8")).decode("ascii")
         path_b64 = base64.b64encode(path.encode("utf-8")).decode("ascii")

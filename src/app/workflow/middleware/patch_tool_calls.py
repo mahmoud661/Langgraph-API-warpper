@@ -1,5 +1,3 @@
-"""Middleware to patch dangling tool calls in the messages history."""
-
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
@@ -9,7 +7,6 @@ from langgraph.types import Overwrite
 
 
 class PatchToolCallsMiddleware(AgentMiddleware):
-    """Middleware to patch dangling tool calls in the messages history."""
 
     def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:  # noqa: ARG002
         """Before the agent runs, handle dangling tool calls from any AIMessage."""

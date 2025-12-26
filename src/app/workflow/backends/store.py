@@ -1,5 +1,3 @@
-"""StoreBackend: Adapter for LangGraph's BaseStore (persistent, cross-thread)."""
-
 from typing import Any
 
 from langgraph.config import get_config
@@ -26,13 +24,7 @@ from .utils import (
 
 
 class StoreBackend(BackendProtocol):
-    """Backend that stores files in LangGraph's BaseStore (persistent).
 
-    Uses LangGraph's Store for persistent, cross-conversation storage.
-    Files are organized via namespaces and persist across all threads.
-
-    The namespace can include an optional assistant_id for multi-agent isolation.
-    """
 
     def __init__(self, runtime: "ToolRuntime"):
         """Initialize StoreBackend with runtime.
@@ -43,14 +35,7 @@ class StoreBackend(BackendProtocol):
         self.runtime = runtime
 
     def _get_store(self) -> BaseStore:
-        """Get the store instance.
 
-        Returns:
-            BaseStore instance from the runtime.
-
-        Raises:
-            ValueError: If no store is available in the runtime.
-        """
         store = self.runtime.store
         if store is None:
             msg = "Store is required but not available in runtime"
@@ -58,16 +43,7 @@ class StoreBackend(BackendProtocol):
         return store
 
     def _get_namespace(self) -> tuple[str, ...]:
-        """Get the namespace for store operations.
 
-        Preference order:
-        1) Use `self.runtime.config` if present (tests pass this explicitly).
-        2) Fallback to `langgraph.config.get_config()` if available.
-        3) Default to ("filesystem",).
-
-        If an assistant_id is available in the config metadata, return
-        (assistant_id, "filesystem") to provide per-assistant isolation.
-        """
         namespace = "filesystem"
 
         # Prefer the runtime-provided config when present
@@ -95,17 +71,7 @@ class StoreBackend(BackendProtocol):
         return (namespace,)
 
     def _convert_store_item_to_file_data(self, store_item: Item) -> dict[str, Any]:
-        """Convert a store Item to FileData format.
 
-        Args:
-            store_item: The store Item containing file data.
-
-        Returns:
-            FileData dict with content, created_at, and modified_at fields.
-
-        Raises:
-            ValueError: If required fields are missing or have incorrect types.
-        """
         if "content" not in store_item.value or not isinstance(
             store_item.value["content"], list
         ):
@@ -130,14 +96,7 @@ class StoreBackend(BackendProtocol):
     def _convert_file_data_to_store_value(
         self, file_data: dict[str, Any]
     ) -> dict[str, Any]:
-        """Convert FileData to a dict suitable for store.put().
 
-        Args:
-            file_data: The FileData to convert.
-
-        Returns:
-            Dictionary with content, created_at, and modified_at fields.
-        """
         return {
             "content": file_data["content"],
             "created_at": file_data["created_at"],
@@ -153,25 +112,7 @@ class StoreBackend(BackendProtocol):
         filter: dict[str, Any] | None = None,
         page_size: int = 100,
     ) -> list[Item]:
-        """Search store with automatic pagination to retrieve all results.
 
-        Args:
-            store: The store to search.
-            namespace: Hierarchical path prefix to search within.
-            query: Optional query for natural language search.
-            filter: Key-value pairs to filter results.
-            page_size: Number of items to fetch per page (default: 100).
-
-        Returns:
-            List of all items matching the search criteria.
-
-        Example:
-            ```python
-            store = _get_store(runtime)
-            namespace = _get_namespace()
-            all_items = _search_store_paginated(store, namespace)
-            ```
-        """
         all_items: list[Item] = []
         offset = 0
         while True:
@@ -192,15 +133,7 @@ class StoreBackend(BackendProtocol):
         return all_items
 
     def ls_info(self, path: str) -> list[FileInfo]:
-        """List files and directories in the specified directory (non-recursive).
 
-        Args:
-            path: Absolute path to directory.
-
-        Returns:
-            List of FileInfo-like dicts for files and directories directly in the directory.
-            Directories have a trailing / in their path and is_dir=True.
-        """
         store = self._get_store()
         namespace = self._get_namespace()
 
@@ -263,16 +196,7 @@ class StoreBackend(BackendProtocol):
         offset: int = 0,
         limit: int = 2000,
     ) -> str:
-        """Read file content with line numbers.
 
-        Args:
-            file_path: Absolute file path.
-            offset: Line offset to start reading from (0-indexed).
-            limit: Maximum number of lines to read.
-
-        Returns:
-            Formatted file content with line numbers, or error message.
-        """
         store = self._get_store()
         namespace = self._get_namespace()
         item: Item | None = store.get(namespace, file_path)
@@ -292,9 +216,7 @@ class StoreBackend(BackendProtocol):
         file_path: str,
         content: str,
     ) -> WriteResult:
-        """Create a new file with content.
-        Returns WriteResult. External storage sets files_update=None.
-        """
+
         store = self._get_store()
         namespace = self._get_namespace()
 
@@ -318,9 +240,7 @@ class StoreBackend(BackendProtocol):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        """Edit a file by replacing string occurrences.
-        Returns EditResult. External storage sets files_update=None.
-        """
+
         store = self._get_store()
         namespace = self._get_namespace()
 
@@ -400,15 +320,7 @@ class StoreBackend(BackendProtocol):
         return infos
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        """Upload multiple files to the store.
 
-        Args:
-            files: List of (path, content) tuples where content is bytes.
-
-        Returns:
-            List of FileUploadResponse objects, one per input file.
-            Response order matches input order.
-        """
         store = self._get_store()
         namespace = self._get_namespace()
         responses: list[FileUploadResponse] = []
@@ -426,15 +338,7 @@ class StoreBackend(BackendProtocol):
         return responses
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        """Download multiple files from the store.
 
-        Args:
-            paths: List of file paths to download.
-
-        Returns:
-            List of FileDownloadResponse objects, one per input path.
-            Response order matches input order.
-        """
         store = self._get_store()
         namespace = self._get_namespace()
         responses: list[FileDownloadResponse] = []

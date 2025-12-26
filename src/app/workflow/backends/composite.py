@@ -1,5 +1,3 @@
-"""CompositeBackend: Route operations to different backends based on path prefix."""
-
 from collections import defaultdict
 
 from .protocol import (
@@ -34,15 +32,6 @@ class CompositeBackend:
         )
 
     def _get_backend_and_key(self, key: str) -> tuple[BackendProtocol, str]:
-        """Determine which backend handles this key and strip prefix.
-
-        Args:
-            key: Original file path
-
-        Returns:
-            Tuple of (backend, stripped_key) where stripped_key has the route
-            prefix removed (but keeps leading slash).
-        """
         # Check routes in order of length (longest first)
         for prefix, backend in self.sorted_routes:
             if key.startswith(prefix):
@@ -55,15 +44,7 @@ class CompositeBackend:
         return self.default, key
 
     def ls_info(self, path: str) -> list[FileInfo]:
-        """List files and directories in the specified directory (non-recursive).
 
-        Args:
-            path: Absolute path to directory.
-
-        Returns:
-            List of FileInfo-like dicts with route prefixes added, for files and directories directly in the directory.
-            Directories have a trailing / in their path and is_dir=True.
-        """
         # Check if path matches a specific route
         for route_prefix, backend in self.sorted_routes:
             if path.startswith(route_prefix.rstrip("/")):
@@ -100,7 +81,6 @@ class CompositeBackend:
         return self.default.ls_info(path)
 
     async def als_info(self, path: str) -> list[FileInfo]:
-        """Async version of ls_info."""
         # Check if path matches a specific route
         for route_prefix, backend in self.sorted_routes:
             if path.startswith(route_prefix.rstrip("/")):
@@ -142,16 +122,7 @@ class CompositeBackend:
         offset: int = 0,
         limit: int = 2000,
     ) -> str:
-        """Read file content, routing to appropriate backend.
 
-        Args:
-            file_path: Absolute file path.
-            offset: Line offset to start reading from (0-indexed).
-            limit: Maximum number of lines to read.
-
-        Returns:
-            Formatted file content with line numbers, or error message.
-        """
         backend, stripped_key = self._get_backend_and_key(file_path)
         return backend.read(stripped_key, offset=offset, limit=limit)
 
@@ -161,7 +132,6 @@ class CompositeBackend:
         offset: int = 0,
         limit: int = 2000,
     ) -> str:
-        """Async version of read."""
         backend, stripped_key = self._get_backend_and_key(file_path)
         return await backend.aread(stripped_key, offset=offset, limit=limit)
 
@@ -207,7 +177,6 @@ class CompositeBackend:
         path: str | None = None,
         glob: str | None = None,
     ) -> list[GrepMatch] | str:
-        """Async version of grep_raw."""
         # If path targets a specific route, search only that backend
         for route_prefix, backend in self.sorted_routes:
             if path is not None and path.startswith(route_prefix.rstrip("/")):
@@ -296,15 +265,7 @@ class CompositeBackend:
         file_path: str,
         content: str,
     ) -> WriteResult:
-        """Create a new file, routing to appropriate backend.
 
-        Args:
-            file_path: Absolute file path.
-            content: File content as a string.
-
-        Returns:
-            Success message or Command object, or error if file already exists.
-        """
         backend, stripped_key = self._get_backend_and_key(file_path)
         res = backend.write(stripped_key, content)
         # If this is a state-backed update and default has state, merge so listings reflect changes
@@ -348,17 +309,7 @@ class CompositeBackend:
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        """Edit a file, routing to appropriate backend.
 
-        Args:
-            file_path: Absolute file path.
-            old_string: String to find and replace.
-            new_string: Replacement string.
-            replace_all: If True, replace all occurrences.
-
-        Returns:
-            Success message or Command object, or error message on failure.
-        """
         backend, stripped_key = self._get_backend_and_key(file_path)
         res = backend.edit(
             stripped_key, old_string, new_string, replace_all=replace_all
@@ -403,20 +354,7 @@ class CompositeBackend:
         self,
         command: str,
     ) -> ExecuteResponse:
-        """Execute a command via the default backend.
 
-        Execution is not path-specific, so it always delegates to the default backend.
-        The default backend must implement SandboxBackendProtocol for this to work.
-
-        Args:
-            command: Full shell command string to execute.
-
-        Returns:
-            ExecuteResponse with combined output, exit code, and truncation flag.
-
-        Raises:
-            NotImplementedError: If default backend doesn't support execution.
-        """
         if isinstance(self.default, SandboxBackendProtocol):
             return self.default.execute(command)
 
@@ -443,18 +381,7 @@ class CompositeBackend:
         )
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        """Upload multiple files, batching by backend for efficiency.
 
-        Groups files by their target backend, calls each backend's upload_files
-        once with all files for that backend, then merges results in original order.
-
-        Args:
-            files: List of (path, content) tuples to upload.
-
-        Returns:
-            List of FileUploadResponse objects, one per input file.
-            Response order matches input order.
-        """
         # Pre-allocate result list
         results: list[FileUploadResponse | None] = [None] * len(files)
 
@@ -526,18 +453,6 @@ class CompositeBackend:
         return results  # type: ignore[return-value]
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        """Download multiple files, batching by backend for efficiency.
-
-        Groups paths by their target backend, calls each backend's download_files
-        once with all paths for that backend, then merges results in original order.
-
-        Args:
-            paths: List of file paths to download.
-
-        Returns:
-            List of FileDownloadResponse objects, one per input path.
-            Response order matches input order.
-        """
         # Pre-allocate result list
         results: list[FileDownloadResponse | None] = [None] * len(paths)
 
@@ -572,7 +487,6 @@ class CompositeBackend:
         return results  # type: ignore[return-value]
 
     async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        """Async version of download_files."""
         # Pre-allocate result list
         results: list[FileDownloadResponse | None] = [None] * len(paths)
 

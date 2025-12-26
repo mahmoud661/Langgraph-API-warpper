@@ -1,12 +1,3 @@
-"""FilesystemBackend: Read and write files directly from the filesystem.
-
-Security and search upgrades:
-- Secure path resolution with root containment when in virtual_mode (sandboxed to cwd)
-- Prevent symlink-following on file I/O using O_NOFOLLOW when available
-- Ripgrep-powered grep with JSON parsing, plus Python fallback with regex
-  and optional glob include filtering, while preserving virtual path behavior
-"""
-
 import json
 import os
 import re
@@ -33,12 +24,7 @@ from .utils import (
 
 
 class FilesystemBackend(BackendProtocol):
-    """Backend that reads and writes files directly from the filesystem.
 
-    Files are accessed using their actual filesystem paths. Relative paths are
-    resolved relative to the current working directory. Content is read/written
-    as plain text, and metadata (timestamps) are derived from filesystem stats.
-    """
 
     def __init__(
         self,
@@ -46,31 +32,13 @@ class FilesystemBackend(BackendProtocol):
         virtual_mode: bool = False,
         max_file_size_mb: int = 10,
     ) -> None:
-        """Initialize filesystem backend.
 
-        Args:
-            root_dir: Optional root directory for file operations. If provided,
-                     all file paths will be resolved relative to this directory.
-                     If not provided, uses the current working directory.
-        """
         self.cwd = Path(root_dir).resolve() if root_dir else Path.cwd()
         self.virtual_mode = virtual_mode
         self.max_file_size_bytes = max_file_size_mb * 1024 * 1024
 
     def _resolve_path(self, key: str) -> Path:
-        """Resolve a file path with security checks.
 
-        When virtual_mode=True, treat incoming paths as virtual absolute paths under
-        self.cwd, disallow traversal (.., ~) and ensure resolved path stays within root.
-        When virtual_mode=False, preserve legacy behavior: absolute paths are allowed
-        as-is; relative paths resolve under cwd.
-
-        Args:
-            key: File path (absolute, relative, or virtual when virtual_mode=True)
-
-        Returns:
-            Resolved absolute Path object
-        """
         if self.virtual_mode:
             vpath = key if key.startswith("/") else "/" + key
             if ".." in vpath or vpath.startswith("~"):
@@ -90,15 +58,7 @@ class FilesystemBackend(BackendProtocol):
         return (self.cwd / path).resolve()
 
     def ls_info(self, path: str) -> list[FileInfo]:
-        """List files and directories in the specified directory (non-recursive).
 
-        Args:
-            path: Absolute directory path to list files from.
-
-        Returns:
-            List of FileInfo-like dicts for files and directories directly in the directory.
-            Directories have a trailing / in their path and is_dir=True.
-        """
         dir_path = self._resolve_path(path)
         if not dir_path.exists() or not dir_path.is_dir():
             return []
@@ -209,16 +169,7 @@ class FilesystemBackend(BackendProtocol):
         offset: int = 0,
         limit: int = 2000,
     ) -> str:
-        """Read file content with line numbers.
 
-        Args:
-            file_path: Absolute or relative file path.
-            offset: Line offset to start reading from (0-indexed).
-            limit: Maximum number of lines to read.
-
-        Returns:
-            Formatted file content with line numbers, or error message.
-        """
         resolved_path = self._resolve_path(file_path)
 
         if not resolved_path.exists() or not resolved_path.is_file():
@@ -253,9 +204,7 @@ class FilesystemBackend(BackendProtocol):
         file_path: str,
         content: str,
     ) -> WriteResult:
-        """Create a new file with content.
-        Returns WriteResult. External storage sets files_update=None.
-        """
+
         resolved_path = self._resolve_path(file_path)
 
         if resolved_path.exists():
@@ -286,9 +235,7 @@ class FilesystemBackend(BackendProtocol):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        """Edit a file by replacing string occurrences.
-        Returns EditResult. External storage sets files_update=None.
-        """
+
         resolved_path = self._resolve_path(file_path)
 
         if not resolved_path.exists() or not resolved_path.is_file():
@@ -510,15 +457,6 @@ class FilesystemBackend(BackendProtocol):
         return results
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        """Upload multiple files to the filesystem.
-
-        Args:
-            files: List of (path, content) tuples where content is bytes.
-
-        Returns:
-            List of FileUploadResponse objects, one per input file.
-            Response order matches input order.
-        """
         responses: list[FileUploadResponse] = []
         for path, content in files:
             try:
@@ -556,14 +494,7 @@ class FilesystemBackend(BackendProtocol):
         return responses
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        """Download multiple files from the filesystem.
 
-        Args:
-            paths: List of file paths to download.
-
-        Returns:
-            List of FileDownloadResponse objects, one per input path.
-        """
         responses: list[FileDownloadResponse] = []
         for path in paths:
             try:

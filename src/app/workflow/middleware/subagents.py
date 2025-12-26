@@ -1,5 +1,3 @@
-"""Middleware for providing subagents to an agent via a `task` tool."""
-
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, NotRequired, TypedDict, cast
 
@@ -19,13 +17,6 @@ from langgraph.types import Command
 
 
 class SubAgent(TypedDict):
-    """Specification for an agent.
-
-    When specifying custom agents, the `default_middleware` from `SubAgentMiddleware`
-    will be applied first, followed by any `middleware` specified in this spec.
-    To use only custom middleware without the defaults, pass `default_middleware=[]`
-    to `SubAgentMiddleware`.
-    """
 
     name: str
     """The name of the agent."""
@@ -223,22 +214,7 @@ def _get_subagents(
     subagents: list[SubAgent | CompiledSubAgent],
     general_purpose_agent: bool,
 ) -> tuple[dict[str, Any], list[str]]:
-    """Create subagent instances from specifications.
 
-    Args:
-        default_model: Default model for subagents that don't specify one.
-        default_tools: Default tools for subagents that don't specify tools.
-        default_middleware: Middleware to apply to all subagents. If `None`,
-            no default middleware is applied.
-        default_interrupt_on: The tool configs to use for the default general-purpose subagent. These
-            are also the fallback for any subagents that don't specify their own tool configs.
-        subagents: List of agent specifications or pre-compiled agents.
-        general_purpose_agent: Whether to include a general-purpose subagent.
-
-    Returns:
-        Tuple of (agent_dict, description_list) where agent_dict maps agent names
-        to runnable instances and description_list contains formatted descriptions.
-    """
     # Use empty list if None (no default middleware)
     default_subagent_middleware = default_middleware or []
 
@@ -303,22 +279,7 @@ def _create_task_tool(
     general_purpose_agent: bool,
     task_description: str | None = None,
 ) -> BaseTool:
-    """Create a task tool for invoking subagents.
 
-    Args:
-        default_model: Default model for subagents.
-        default_tools: Default tools for subagents.
-        default_middleware: Middleware to apply to all subagents.
-        default_interrupt_on: The tool configs to use for the default general-purpose subagent. These
-            are also the fallback for any subagents that don't specify their own tool configs.
-        subagents: List of subagent specifications.
-        general_purpose_agent: Whether to include general-purpose agent.
-        task_description: Custom description for the task tool. If `None`,
-            uses default template. Supports `{available_agents}` placeholder.
-
-    Returns:
-        A StructuredTool that can invoke subagents by type.
-    """
     subagent_graphs, subagent_descriptions = _get_subagents(
         default_model=default_model,
         default_tools=default_tools,
@@ -410,65 +371,6 @@ def _create_task_tool(
 
 
 class SubAgentMiddleware(AgentMiddleware):
-    """Middleware for providing subagents to an agent via a `task` tool.
-
-    This  middleware adds a `task` tool to the agent that can be used to invoke subagents.
-    Subagents are useful for handling complex tasks that require multiple steps, or tasks
-    that require a lot of context to resolve.
-
-    A chief benefit of subagents is that they can handle multi-step tasks, and then return
-    a clean, concise response to the main agent.
-
-    Subagents are also great for different domains of expertise that require a narrower
-    subset of tools and focus.
-
-    This middleware comes with a default general-purpose subagent that can be used to
-    handle the same tasks as the main agent, but with isolated context.
-
-    Args:
-        default_model: The model to use for subagents.
-            Can be a LanguageModelLike or a dict for init_chat_model.
-        default_tools: The tools to use for the default general-purpose subagent.
-        default_middleware: Default middleware to apply to all subagents. If `None` (default),
-            no default middleware is applied. Pass a list to specify custom middleware.
-        default_interrupt_on: The tool configs to use for the default general-purpose subagent. These
-            are also the fallback for any subagents that don't specify their own tool configs.
-        subagents: A list of additional subagents to provide to the agent.
-        system_prompt: Full system prompt override. When provided, completely replaces
-            the agent's system prompt.
-        general_purpose_agent: Whether to include the general-purpose agent. Defaults to `True`.
-        task_description: Custom description for the task tool. If `None`, uses the
-            default description template.
-
-    Example:
-        ```python
-        from src.app.workflow.middleware.subagents import SubAgentMiddleware
-        from src.app.workflow.react_agent import create_agent
-
-        # Basic usage with defaults (no default middleware)
-        agent = create_agent(
-            "openai:gpt-4o",
-            middleware=[
-                SubAgentMiddleware(
-                    default_model="openai:gpt-4o",
-                    subagents=[],
-                )
-            ],
-        )
-
-        # Add custom middleware to subagents
-        agent = create_agent(
-            "openai:gpt-4o",
-            middleware=[
-                SubAgentMiddleware(
-                    default_model="openai:gpt-4o",
-                    default_middleware=[TodoListMiddleware()],
-                    subagents=[],
-                )
-            ],
-        )
-        ```
-    """
 
     def __init__(
         self,

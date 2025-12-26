@@ -60,29 +60,7 @@ class FileData(TypedDict):
 def _file_data_reducer(
     left: dict[str, FileData] | None, right: dict[str, FileData | None]
 ) -> dict[str, FileData]:
-    """Merge file updates with support for deletions.
 
-    This reducer enables file deletion by treating `None` values in the right
-    dictionary as deletion markers. It's designed to work with LangGraph's
-    state management where annotated reducers control how state updates merge.
-
-    Args:
-        left: Existing files dictionary. May be `None` during initialization.
-        right: New files dictionary to merge. Files with `None` values are
-            treated as deletion markers and removed from the result.
-
-    Returns:
-        Merged dictionary where right overwrites left for matching keys,
-        and `None` values in right trigger deletions.
-
-    Example:
-        ```python
-        existing = {"/file1.txt": FileData(...), "/file2.txt": FileData(...)}
-        updates = {"/file2.txt": None, "/file3.txt": FileData(...)}
-        result = file_data_reducer(existing, updates)
-        # Result: {"/file1.txt": FileData(...), "/file3.txt": FileData(...)}
-        ```
-    """
     if left is None:
         return {k: v for k, v in right.items() if v is not None}
 
@@ -96,39 +74,7 @@ def _file_data_reducer(
 
 
 def _validate_path(path: str, *, allowed_prefixes: Sequence[str] | None = None) -> str:
-    r"""Validate and normalize file path for security.
 
-    Ensures paths are safe to use by preventing directory traversal attacks
-    and enforcing consistent formatting. All paths are normalized to use
-    forward slashes and start with a leading slash.
-
-    This function is designed for virtual filesystem paths and rejects
-    Windows absolute paths (e.g., C:/..., F:/...) to maintain consistency
-    and prevent path format ambiguity.
-
-    Args:
-        path: The path to validate and normalize.
-        allowed_prefixes: Optional list of allowed path prefixes. If provided,
-            the normalized path must start with one of these prefixes.
-
-    Returns:
-        Normalized canonical path starting with `/` and using forward slashes.
-
-    Raises:
-        ValueError: If path contains traversal sequences (`..` or `~`), is a
-            Windows absolute path (e.g., C:/...), or does not start with an
-            allowed prefix when `allowed_prefixes` is specified.
-
-    Example:
-        ```python
-        validate_path("foo/bar")  # Returns: "/foo/bar"
-        validate_path("/./foo//bar")  # Returns: "/foo/bar"
-        validate_path("../etc/passwd")  # Raises ValueError
-        validate_path(r"C:\\Users\\file.txt")  # Raises ValueError
-        validate_path("/data/file.txt", allowed_prefixes=["/data/"])  # OK
-        validate_path("/etc/file.txt", allowed_prefixes=["/data/"])  # Raises ValueError
-        ```
-    """
     if ".." in path or path.startswith("~"):
         msg = f"Path traversal not allowed: {path}"
         raise ValueError(msg)
@@ -319,15 +265,7 @@ def _ls_tool_generator(
     backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
-    """Generate the ls (list files) tool.
 
-    Args:
-        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
-        custom_description: Optional custom description for the tool.
-
-    Returns:
-        Configured ls tool that lists files using the backend.
-    """
     tool_description = custom_description or LIST_FILES_TOOL_DESCRIPTION
 
     def sync_ls(runtime: ToolRuntime[None, FilesystemState], path: str) -> str:
@@ -360,15 +298,7 @@ def _read_file_tool_generator(
     backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
-    """Generate the read_file tool.
 
-    Args:
-        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
-        custom_description: Optional custom description for the tool.
-
-    Returns:
-        Configured read_file tool that reads files using the backend.
-    """
     tool_description = custom_description or READ_FILE_TOOL_DESCRIPTION
 
     def sync_read_file(
@@ -405,15 +335,7 @@ def _write_file_tool_generator(
     backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
-    """Generate the write_file tool.
 
-    Args:
-        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
-        custom_description: Optional custom description for the tool.
-
-    Returns:
-        Configured write_file tool that creates new files using the backend.
-    """
     tool_description = custom_description or WRITE_FILE_TOOL_DESCRIPTION
 
     def sync_write_file(
@@ -480,15 +402,7 @@ def _edit_file_tool_generator(
     backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
-    """Generate the edit_file tool.
 
-    Args:
-        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
-        custom_description: Optional custom description for the tool.
-
-    Returns:
-        Configured edit_file tool that performs string replacements in files using the backend.
-    """
     tool_description = custom_description or EDIT_FILE_TOOL_DESCRIPTION
 
     def sync_edit_file(
@@ -563,15 +477,7 @@ def _glob_tool_generator(
     backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
-    """Generate the glob tool.
 
-    Args:
-        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
-        custom_description: Optional custom description for the tool.
-
-    Returns:
-        Configured glob tool that finds files by pattern using the backend.
-    """
     tool_description = custom_description or GLOB_TOOL_DESCRIPTION
 
     def sync_glob(
@@ -606,15 +512,7 @@ def _grep_tool_generator(
     backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
-    """Generate the grep tool.
 
-    Args:
-        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
-        custom_description: Optional custom description for the tool.
-
-    Returns:
-        Configured grep tool that searches for patterns in files using the backend.
-    """
     tool_description = custom_description or GREP_TOOL_DESCRIPTION
 
     def sync_grep(
@@ -660,17 +558,7 @@ def _grep_tool_generator(
 
 
 def _supports_execution(backend: BackendProtocol) -> bool:
-    """Check if a backend supports command execution.
 
-    For CompositeBackend, checks if the default backend supports execution.
-    For other backends, checks if they implement SandboxBackendProtocol.
-
-    Args:
-        backend: The backend to check.
-
-    Returns:
-        True if the backend supports execution, False otherwise.
-    """
     # Import here to avoid circular dependency
     from ..backends.composite import CompositeBackend
 
@@ -686,15 +574,7 @@ def _execute_tool_generator(
     backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
-    """Generate the execute tool for sandbox command execution.
 
-    Args:
-        backend: Backend to use for execution, or a factory function that takes runtime and returns a backend.
-        custom_description: Optional custom description for the tool.
-
-    Returns:
-        Configured execute tool that runs commands if backend supports SandboxBackendProtocol.
-    """
     tool_description = custom_description or EXECUTE_TOOL_DESCRIPTION
 
     def sync_execute(
@@ -786,15 +666,7 @@ def _get_filesystem_tools(
     backend: BackendProtocol,
     custom_tool_descriptions: dict[str, str] | None = None,
 ) -> list[BaseTool]:
-    """Get filesystem and execution tools.
 
-    Args:
-        backend: Backend to use for file storage and optional execution, or a factory function that takes runtime and returns a backend.
-        custom_tool_descriptions: Optional custom descriptions for tools.
-
-    Returns:
-        List of configured tools: ls, read_file, write_file, edit_file, glob, grep, execute.
-    """
     if custom_tool_descriptions is None:
         custom_tool_descriptions = {}
     tools = []
@@ -816,44 +688,7 @@ Here are the first 10 lines of the result:
 
 
 class FilesystemMiddleware(AgentMiddleware):
-    """Middleware for providing filesystem and optional execution tools to an agent.
 
-    This middleware adds filesystem tools to the agent: ls, read_file, write_file,
-    edit_file, glob, and grep. Files can be stored using any backend that implements
-    the BackendProtocol.
-
-    If the backend implements SandboxBackendProtocol, an execute tool is also added
-    for running shell commands.
-
-    Args:
-        backend: Backend for file storage and optional execution. If not provided, defaults to StateBackend
-            (ephemeral storage in agent state). For persistent storage or hybrid setups,
-            use CompositeBackend with custom routes. For execution support, use a backend
-            that implements SandboxBackendProtocol.
-        system_prompt: Optional custom system prompt override.
-        custom_tool_descriptions: Optional custom tool descriptions override.
-        tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
-
-    Example:
-        ```python
-        from src.app.workflow.backends import CompositeBackend, StateBackend, StoreBackend
-        from src.app.workflow.middleware.filesystem import FilesystemMiddleware
-        from src.app.workflow.react_agent import create_agent
-
-        # Ephemeral storage only (default, no execution)
-        agent = create_agent(middleware=[FilesystemMiddleware()])
-
-        # With hybrid storage (ephemeral + persistent /memories/)
-        backend = CompositeBackend(default=StateBackend(), routes={"/memories/": StoreBackend()})
-        agent = create_agent(middleware=[FilesystemMiddleware(backend=backend)])
-
-        # With sandbox backend (supports execution)
-        from my_sandbox import DockerSandboxBackend
-
-        sandbox = DockerSandboxBackend(container_id="my-container")
-        agent = create_agent(middleware=[FilesystemMiddleware(backend=sandbox)])
-        ```
-    """
 
     state_schema = FilesystemState
 
@@ -865,15 +700,7 @@ class FilesystemMiddleware(AgentMiddleware):
         custom_tool_descriptions: dict[str, str] | None = None,
         tool_token_limit_before_evict: int | None = 20000,
     ) -> None:
-        """Initialize the filesystem middleware.
 
-        Args:
-            backend: Backend for file storage and optional execution, or a factory callable.
-                Defaults to StateBackend if not provided.
-            system_prompt: Optional custom system prompt override.
-            custom_tool_descriptions: Optional custom tool descriptions override.
-            tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
-        """
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
 
         # Use provided backend or default to StateBackend factory
@@ -885,14 +712,7 @@ class FilesystemMiddleware(AgentMiddleware):
         self.tools = _get_filesystem_tools(self.backend, custom_tool_descriptions)
 
     def _get_backend(self, runtime: ToolRuntime) -> BackendProtocol:
-        """Get the resolved backend instance from backend or factory.
 
-        Args:
-            runtime: The tool runtime context.
-
-        Returns:
-            Resolved backend instance.
-        """
         if callable(self.backend):
             return self.backend(runtime)
         return self.backend
@@ -902,15 +722,7 @@ class FilesystemMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        """Update the system prompt and filter tools based on backend capabilities.
 
-        Args:
-            request: The model request being processed.
-            handler: The handler function to call with the modified request.
-
-        Returns:
-            The model response from the handler.
-        """
         # Check if execute tool is present and if backend supports it
         has_execute_tool = any(
             (tool.name if hasattr(tool, "name") else tool.get("name")) == "execute"
@@ -963,15 +775,7 @@ class FilesystemMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        """(async) Update the system prompt and filter tools based on backend capabilities.
 
-        Args:
-            request: The model request being processed.
-            handler: The handler function to call with the modified request.
-
-        Returns:
-            The model response from the handler.
-        """
         # Check if execute tool is present and if backend supports it
         has_execute_tool = any(
             (tool.name if hasattr(tool, "name") else tool.get("name")) == "execute"
@@ -1115,15 +919,7 @@ class FilesystemMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command],
     ) -> ToolMessage | Command:
-        """Check the size of the tool call result and evict to filesystem if too large.
 
-        Args:
-            request: The tool call request being processed.
-            handler: The handler function to call with the modified request.
-
-        Returns:
-            The raw ToolMessage, or a pseudo tool message with the ToolResult in state.
-        """
         if (
             self.tool_token_limit_before_evict is None
             or request.tool_call["name"] in TOOL_GENERATORS
@@ -1138,15 +934,7 @@ class FilesystemMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
     ) -> ToolMessage | Command:
-        """(async)Check the size of the tool call result and evict to filesystem if too large.
 
-        Args:
-            request: The tool call request being processed.
-            handler: The handler function to call with the modified request.
-
-        Returns:
-            The raw ToolMessage, or a pseudo tool message with the ToolResult in state.
-        """
         if (
             self.tool_token_limit_before_evict is None
             or request.tool_call["name"] in TOOL_GENERATORS

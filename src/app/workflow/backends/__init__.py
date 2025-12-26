@@ -1,5 +1,3 @@
-"""Memory backends for pluggable file storage."""
-
 from .composite import CompositeBackend
 from .filesystem import FilesystemBackend
 from .protocol import BackendProtocol

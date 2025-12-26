@@ -30,6 +30,16 @@ from src.app.workflow.strategy_detection import (
     _handle_structured_output_error,
     _supports_provider_strategy,
 )
+from langchain_core.messages import AIMessage, ToolMessage
+
+from langchain.agents.structured_output import (
+    MultipleStructuredOutputsError,
+    ProviderStrategy,
+    ProviderStrategyBinding,
+    StructuredOutputError,
+    StructuredOutputValidationError,
+    ToolStrategy,
+)
 
 
 def _handle_model_output(
@@ -37,24 +47,6 @@ def _handle_model_output(
     effective_response_format: ResponseFormat | None,
     structured_output_tools: dict[str, OutputToolBinding],
 ) -> dict[str, Any]:
-    """Handle model output including structured responses.
-
-    Args:
-        output: The AI message output from the model.
-        effective_response_format: The actual strategy used
-            (may differ from initial if auto-detected).
-        structured_output_tools: Dictionary of structured output tool bindings.
-    """
-    from langchain_core.messages import AIMessage, ToolMessage
-
-    from langchain.agents.structured_output import (
-        MultipleStructuredOutputsError,
-        ProviderStrategy,
-        ProviderStrategyBinding,
-        StructuredOutputError,
-        StructuredOutputValidationError,
-        ToolStrategy,
-    )
 
     # Handle structured output with provider strategy
     if isinstance(effective_response_format, ProviderStrategy):
@@ -166,20 +158,7 @@ def _get_bound_model(
     tool_node: ToolNode | None,
     structured_output_tools: dict[str, OutputToolBinding],
 ) -> tuple[Runnable, ResponseFormat | None]:
-    """Get the model with appropriate tool bindings.
 
-    Performs auto-detection of strategy if needed based on model capabilities.
-
-    Args:
-        request: The model request containing model, tools, and response format.
-        tool_node: The tool node containing available tools.
-        structured_output_tools: Dictionary of structured output tool bindings.
-
-    Returns:
-        Tuple of `(bound_model, effective_response_format)` where
-        `effective_response_format` is the actual strategy used (may differ from
-        initial if auto-detected).
-    """
     from langchain_core.tools import BaseTool
 
     from langchain.agents.structured_output import (
@@ -299,16 +278,7 @@ def make_execute_model_sync(
     structured_output_tools: dict[str, OutputToolBinding],
     name: str | None,
 ):
-    """Create a sync model execution function.
 
-    Args:
-        tool_node: The tool node containing available tools.
-        structured_output_tools: Dictionary of structured output tool bindings.
-        name: Optional name for the agent.
-
-    Returns:
-        A function that executes the model synchronously.
-    """
     from langchain.agents.middleware.types import ModelRequest, ModelResponse
 
     def _execute_model_sync(request: ModelRequest) -> ModelResponse:
@@ -349,26 +319,11 @@ def make_execute_model_async(
     structured_output_tools: dict[str, OutputToolBinding],
     name: str | None,
 ):
-    """Create an async model execution function.
 
-    Args:
-        tool_node: The tool node containing available tools.
-        structured_output_tools: Dictionary of structured output tool bindings.
-        name: Optional name for the agent.
-
-    Returns:
-        A function that executes the model asynchronously.
-    """
     from langchain.agents.middleware.types import ModelRequest, ModelResponse
 
     async def _execute_model_async(request: ModelRequest) -> ModelResponse:
-        """Execute model asynchronously and return response.
 
-        This is the core async model execution logic wrapped by `wrap_model_call`
-        handlers.
-
-        Raises any exceptions that occur during model invocation.
-        """
         # Get the bound model (with auto-detection if needed)
         model_, effective_response_format = _get_bound_model(
             request, tool_node, structured_output_tools
@@ -406,21 +361,7 @@ def make_model_node(
     structured_output_tools: dict[str, OutputToolBinding],
     name: str | None,
 ):
-    """Create a sync model node function.
 
-    Args:
-        model: The chat model to use.
-        default_tools: Default tools available to the model.
-        system_message: System message for the model.
-        initial_response_format: Initial response format configuration.
-        wrap_model_call_handler: Composed sync middleware handler.
-        tool_node: The tool node containing available tools.
-        structured_output_tools: Dictionary of structured output tool bindings.
-        name: Optional name for the agent.
-
-    Returns:
-        A function that handles sync model requests.
-    """
     from langchain.agents.middleware.types import AgentState, ModelRequest
 
     _execute_model_sync = make_execute_model_sync(
@@ -467,21 +408,7 @@ def make_amodel_node(
     structured_output_tools: dict[str, OutputToolBinding],
     name: str | None,
 ):
-    """Create an async model node function.
 
-    Args:
-        model: The chat model to use.
-        default_tools: Default tools available to the model.
-        system_message: System message for the model.
-        initial_response_format: Initial response format configuration.
-        awrap_model_call_handler: Composed async middleware handler.
-        tool_node: The tool node containing available tools.
-        structured_output_tools: Dictionary of structured output tool bindings.
-        name: Optional name for the agent.
-
-    Returns:
-        A function that handles async model requests.
-    """
     from langchain.agents.middleware.types import AgentState, ModelRequest
 
     _execute_model_async = make_execute_model_async(

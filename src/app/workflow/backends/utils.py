@@ -1,10 +1,3 @@
-"""Shared utility functions for memory backend implementations.
-
-This module contains both user-facing string formatters and structured
-helpers used by backends and the composite router. Structured helpers
-enable composition without fragile string parsing.
-"""
-
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,10 +22,7 @@ GrepMatch = _GrepMatch
 
 
 def sanitize_tool_call_id(tool_call_id: str) -> str:
-    r"""Sanitize tool_call_id to prevent path traversal and separator issues.
 
-    Replaces dangerous characters (., /, \) with underscores.
-    """
     sanitized = tool_call_id.replace(".", "_").replace("/", "_").replace("\\", "_")
     return sanitized
 
@@ -41,17 +31,7 @@ def format_content_with_line_numbers(
     content: str | list[str],
     start_line: int = 1,
 ) -> str:
-    """Format file content with line numbers (cat -n style).
 
-    Chunks lines longer than MAX_LINE_LENGTH with continuation markers (e.g., 5.1, 5.2).
-
-    Args:
-        content: File content as string or list of lines
-        start_line: Starting line number (default: 1)
-
-    Returns:
-        Formatted content with line numbers and continuation markers
-    """
     if isinstance(content, str):
         lines = content.split("\n")
         if lines and lines[-1] == "":
@@ -86,41 +66,19 @@ def format_content_with_line_numbers(
 
 
 def check_empty_content(content: str) -> str | None:
-    """Check if content is empty and return warning message.
 
-    Args:
-        content: Content to check
-
-    Returns:
-        Warning message if empty, None otherwise
-    """
     if not content or content.strip() == "":
         return EMPTY_CONTENT_WARNING
     return None
 
 
 def file_data_to_string(file_data: dict[str, Any]) -> str:
-    """Convert FileData to plain string content.
 
-    Args:
-        file_data: FileData dict with 'content' key
-
-    Returns:
-        Content as string with lines joined by newlines
-    """
     return "\n".join(file_data["content"])
 
 
 def create_file_data(content: str, created_at: str | None = None) -> dict[str, Any]:
-    """Create a FileData object with timestamps.
 
-    Args:
-        content: File content as string
-        created_at: Optional creation timestamp (ISO format)
-
-    Returns:
-        FileData dict with content and timestamps
-    """
     lines = content.split("\n") if isinstance(content, str) else content
     now = datetime.now(UTC).isoformat()
 
@@ -132,15 +90,7 @@ def create_file_data(content: str, created_at: str | None = None) -> dict[str, A
 
 
 def update_file_data(file_data: dict[str, Any], content: str) -> dict[str, Any]:
-    """Update FileData with new content, preserving creation timestamp.
 
-    Args:
-        file_data: Existing FileData dict
-        content: New content as string
-
-    Returns:
-        Updated FileData dict
-    """
     lines = content.split("\n") if isinstance(content, str) else content
     now = datetime.now(UTC).isoformat()
 
@@ -156,16 +106,7 @@ def format_read_response(
     offset: int,
     limit: int,
 ) -> str:
-    """Format file data for read response with line numbers.
 
-    Args:
-        file_data: FileData dict
-        offset: Line offset (0-indexed)
-        limit: Maximum number of lines
-
-    Returns:
-        Formatted content or error message
-    """
     content = file_data_to_string(file_data)
     empty_msg = check_empty_content(content)
     if empty_msg:
@@ -188,17 +129,7 @@ def perform_string_replacement(
     new_string: str,
     replace_all: bool,
 ) -> tuple[str, int] | str:
-    """Perform string replacement with occurrence validation.
 
-    Args:
-        content: Original content
-        old_string: String to replace
-        new_string: Replacement string
-        replace_all: Whether to replace all occurrences
-
-    Returns:
-        Tuple of (new_content, occurrences) on success, or error message string
-    """
     occurrences = content.count(old_string)
 
     if occurrences == 0:
@@ -227,17 +158,7 @@ def truncate_if_too_long(result: list[str] | str) -> list[str] | str:
 
 
 def _validate_path(path: str | None) -> str:
-    """Validate and normalize a path.
 
-    Args:
-        path: Path to validate
-
-    Returns:
-        Normalized path starting with /
-
-    Raises:
-        ValueError: If path is invalid
-    """
     path = path or "/"
     if not path or path.strip() == "":
         raise ValueError("Path cannot be empty")
@@ -255,24 +176,7 @@ def _glob_search_files(
     pattern: str,
     path: str = "/",
 ) -> str:
-    """Search files dict for paths matching glob pattern.
 
-    Args:
-        files: Dictionary of file paths to FileData.
-        pattern: Glob pattern (e.g., "*.py", "**/*.ts").
-        path: Base path to search from.
-
-    Returns:
-        Newline-separated file paths, sorted by modification time (most recent first).
-        Returns "No files found" if no matches.
-
-    Example:
-        ```python
-        files = {"/src/main.py": FileData(...), "/test.py": FileData(...)}
-        _glob_search_files(files, "*.py", "/")
-        # Returns: "/test.py\n/src/main.py" (sorted by modified_at)
-        ```
-    """
     try:
         normalized_path = _validate_path(path)
     except ValueError:
@@ -309,15 +213,7 @@ def _format_grep_results(
     results: dict[str, list[tuple[int, str]]],
     output_mode: Literal["files_with_matches", "content", "count"],
 ) -> str:
-    """Format grep search results based on output mode.
 
-    Args:
-        results: Dictionary mapping file paths to list of (line_num, line_content) tuples
-        output_mode: Output format - "files_with_matches", "content", or "count"
-
-    Returns:
-        Formatted string output
-    """
     if output_mode == "files_with_matches":
         return "\n".join(sorted(results.keys()))
     if output_mode == "count":
@@ -343,25 +239,7 @@ def _grep_search_files(
         "files_with_matches", "content", "count"
     ] = "files_with_matches",
 ) -> str:
-    """Search file contents for regex pattern.
 
-    Args:
-        files: Dictionary of file paths to FileData.
-        pattern: Regex pattern to search for.
-        path: Base path to search from.
-        glob: Optional glob pattern to filter files (e.g., "*.py").
-        output_mode: Output format - "files_with_matches", "content", or "count".
-
-    Returns:
-        Formatted search results. Returns "No matches found" if no results.
-
-    Example:
-        ```python
-        files = {"/file.py": FileData(content=["import os", "print('hi')"], ...)}
-        _grep_search_files(files, "import", "/")
-        # Returns: "/file.py" (with output_mode="files_with_matches")
-        ```
-    """
     try:
         regex = re.compile(pattern)
     except re.error as e:
@@ -403,12 +281,7 @@ def grep_matches_from_files(
     path: str | None = None,
     glob: str | None = None,
 ) -> list[GrepMatch] | str:
-    """Return structured grep matches from an in-memory files mapping.
 
-    Returns a list of GrepMatch on success, or a string for invalid inputs
-    (e.g., invalid regex). We deliberately do not raise here to keep backends
-    non-throwing in tool contexts and preserve user-facing error messages.
-    """
     try:
         regex = re.compile(pattern)
     except re.error as e:

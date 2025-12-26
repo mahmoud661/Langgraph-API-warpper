@@ -1,5 +1,3 @@
-"""Deepagents come with planning, filesystem, and subagents."""
-
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -33,11 +31,6 @@ BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of yo
 
 
 def get_default_model() -> BaseChatModel:
-    """Get the default model for deep agents.
-
-    Returns:
-        A chat model instance configured via src/app/llm_provider.py.
-    """
     return create_llm()
 
 
@@ -58,47 +51,7 @@ def create_deep_agent(
     name: str | None = None,
     cache: BaseCache | None = None,
 ) -> CompiledStateGraph:
-    """Create a deep agent.
 
-    This agent will by default have access to a tool to write todos (write_todos),
-    seven file and execution tools: ls, read_file, write_file, edit_file, glob, grep, execute,
-    and a tool to call subagents.
-
-    The execute tool allows running shell commands if the backend implements SandboxBackendProtocol.
-    For non-sandbox backends, the execute tool will return an error message.
-
-    Args:
-        model: The model to use. Defaults to Claude Sonnet 4.
-        tools: The tools the agent should have access to.
-        system_prompt: The additional instructions the agent should have. Will go in
-            the system prompt.
-        middleware: Additional middleware to apply after standard middleware.
-        subagents: The subagents to use. Each subagent should be a dictionary with the
-            following keys:
-                - `name`
-                - `description` (used by the main agent to decide whether to call the
-                  sub agent)
-                - `prompt` (used as the system prompt in the subagent)
-                - (optional) `tools`
-                - (optional) `model` (either a LanguageModelLike instance or dict
-                  settings)
-                - (optional) `middleware` (list of AgentMiddleware)
-        response_format: A structured output response format to use for the agent.
-        context_schema: The schema of the deep agent.
-        checkpointer: Optional checkpointer for persisting agent state between runs.
-        store: Optional store for persistent storage (required if backend uses StoreBackend).
-        backend: Optional backend for file storage and execution. Pass either a Backend instance
-            or a callable factory like `lambda rt: StateBackend(rt)`. For execution support,
-            use a backend that implements SandboxBackendProtocol.
-        interrupt_on: Optional Dict[str, bool | InterruptOnConfig] mapping tool names to
-            interrupt configs.
-        debug: Whether to enable debug mode. Passed through to create_agent.
-        name: The name of the agent. Passed through to create_agent.
-        cache: The cache to use for the agent. Passed through to create_agent.
-
-    Returns:
-        A configured deep agent.
-    """
     if model is None:
         model = get_default_model()
 
@@ -168,15 +121,5 @@ def create_deep_agent(
 
 
 def make_graph(config: dict) -> CompiledStateGraph:
-    """Create a deep agent graph for langgraph server.
 
-    This is a factory function compatible with langgraph.json that takes
-    a RunnableConfig and returns a compiled graph with default settings.
-
-    Args:
-        config: RunnableConfig dictionary (required by langgraph server)
-
-    Returns:
-        Compiled deep agent graph
-    """
     return create_deep_agent()

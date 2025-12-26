@@ -1,5 +1,3 @@
-"""Graph edge routing and state transition logic."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, cast
@@ -193,16 +191,7 @@ def _add_middleware_edge(
     end_destination: str,
     can_jump_to: list[JumpTo] | None,
 ) -> None:
-    """Add an edge to the graph for a middleware node.
 
-    Args:
-        graph: The graph to add the edge to.
-        name: The name of the middleware node.
-        default_destination: The default destination for the edge.
-        model_destination: The destination for the edge to the model.
-        end_destination: The destination for the edge to the end.
-        can_jump_to: The conditionally jumpable destinations for the edge.
-    """
     from langgraph._internal._runnable import RunnableCallable
 
     if can_jump_to:
