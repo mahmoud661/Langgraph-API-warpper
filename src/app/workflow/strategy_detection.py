@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
     from langchain.agents.structured_output import ResponseFormat, ToolStrategy
 
-from .constants import (
+from src.app.workflow.constants import (
     FALLBACK_MODELS_WITH_STRUCTURED_OUTPUT,
     STRUCTURED_OUTPUT_ERROR_TEMPLATE,
 )

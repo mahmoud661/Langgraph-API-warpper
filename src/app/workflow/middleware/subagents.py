@@ -3,9 +3,13 @@
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, NotRequired, TypedDict, cast
 
-from langchain.agents import create_agent
+from src.app.workflow.react_agent import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig
-from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
+from langchain.agents.middleware.types import (
+    AgentMiddleware,
+    ModelRequest,
+    ModelResponse,
+)
 from langchain.tools import BaseTool, ToolRuntime
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -245,7 +249,9 @@ def _get_subagents(
     if general_purpose_agent:
         general_purpose_middleware = [*default_subagent_middleware]
         if default_interrupt_on:
-            general_purpose_middleware.append(HumanInTheLoopMiddleware(interrupt_on=default_interrupt_on))
+            general_purpose_middleware.append(
+                HumanInTheLoopMiddleware(interrupt_on=default_interrupt_on)
+            )
         general_purpose_subagent = create_agent(
             default_model,
             system_prompt=DEFAULT_SUBAGENT_PROMPT,
@@ -253,7 +259,9 @@ def _get_subagents(
             middleware=general_purpose_middleware,
         )
         agents["general-purpose"] = general_purpose_subagent
-        subagent_descriptions.append(f"- general-purpose: {DEFAULT_GENERAL_PURPOSE_DESCRIPTION}")
+        subagent_descriptions.append(
+            f"- general-purpose: {DEFAULT_GENERAL_PURPOSE_DESCRIPTION}"
+        )
 
     # Process custom subagents
     for agent_ in subagents:
@@ -266,7 +274,11 @@ def _get_subagents(
 
         subagent_model = agent_.get("model", default_model)
 
-        _middleware = [*default_subagent_middleware, *agent_["middleware"]] if "middleware" in agent_ else [*default_subagent_middleware]
+        _middleware = (
+            [*default_subagent_middleware, *agent_["middleware"]]
+            if "middleware" in agent_
+            else [*default_subagent_middleware]
+        )
 
         interrupt_on = agent_.get("interrupt_on", default_interrupt_on)
         if interrupt_on:
@@ -318,9 +330,13 @@ def _create_task_tool(
     subagent_description_str = "\n".join(subagent_descriptions)
 
     def _return_command_with_state_update(result: dict, tool_call_id: str) -> Command:
-        state_update = {k: v for k, v in result.items() if k not in _EXCLUDED_STATE_KEYS}
+        state_update = {
+            k: v for k, v in result.items() if k not in _EXCLUDED_STATE_KEYS
+        }
         # Strip trailing whitespace to prevent API errors with Anthropic
-        message_text = result["messages"][-1].text.rstrip() if result["messages"][-1].text else ""
+        message_text = (
+            result["messages"][-1].text.rstrip() if result["messages"][-1].text else ""
+        )
         return Command(
             update={
                 **state_update,
@@ -328,20 +344,28 @@ def _create_task_tool(
             }
         )
 
-    def _validate_and_prepare_state(subagent_type: str, description: str, runtime: ToolRuntime) -> tuple[Runnable, dict]:
+    def _validate_and_prepare_state(
+        subagent_type: str, description: str, runtime: ToolRuntime
+    ) -> tuple[Runnable, dict]:
         """Prepare state for invocation."""
         subagent = subagent_graphs[subagent_type]
         # Create a new state dict to avoid mutating the original
-        subagent_state = {k: v for k, v in runtime.state.items() if k not in _EXCLUDED_STATE_KEYS}
+        subagent_state = {
+            k: v for k, v in runtime.state.items() if k not in _EXCLUDED_STATE_KEYS
+        }
         subagent_state["messages"] = [HumanMessage(content=description)]
         return subagent, subagent_state
 
     # Use custom description if provided, otherwise use default template
     if task_description is None:
-        task_description = TASK_TOOL_DESCRIPTION.format(available_agents=subagent_description_str)
+        task_description = TASK_TOOL_DESCRIPTION.format(
+            available_agents=subagent_description_str
+        )
     elif "{available_agents}" in task_description:
         # If custom description has placeholder, format with agent descriptions
-        task_description = task_description.format(available_agents=subagent_description_str)
+        task_description = task_description.format(
+            available_agents=subagent_description_str
+        )
 
     def task(
         description: str,
@@ -351,7 +375,9 @@ def _create_task_tool(
         if subagent_type not in subagent_graphs:
             allowed_types = ", ".join([f"`{k}`" for k in subagent_graphs])
             return f"We cannot invoke subagent {subagent_type} because it does not exist, the only allowed types are {allowed_types}"
-        subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
+        subagent, subagent_state = _validate_and_prepare_state(
+            subagent_type, description, runtime
+        )
         result = subagent.invoke(subagent_state, runtime.config)
         if not runtime.tool_call_id:
             value_error_msg = "Tool call ID is required for subagent invocation"
@@ -366,7 +392,9 @@ def _create_task_tool(
         if subagent_type not in subagent_graphs:
             allowed_types = ", ".join([f"`{k}`" for k in subagent_graphs])
             return f"We cannot invoke subagent {subagent_type} because it does not exist, the only allowed types are {allowed_types}"
-        subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
+        subagent, subagent_state = _validate_and_prepare_state(
+            subagent_type, description, runtime
+        )
         result = await subagent.ainvoke(subagent_state, runtime.config)
         if not runtime.tool_call_id:
             value_error_msg = "Tool call ID is required for subagent invocation"
@@ -414,8 +442,8 @@ class SubAgentMiddleware(AgentMiddleware):
 
     Example:
         ```python
-        from langchain.agents.middleware.subagents import SubAgentMiddleware
-        from langchain.agents import create_agent
+        from src.app.workflow.middleware.subagents import SubAgentMiddleware
+        from src.app.workflow.react_agent import create_agent
 
         # Basic usage with defaults (no default middleware)
         agent = create_agent(
@@ -475,7 +503,11 @@ class SubAgentMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """Update the system prompt to include instructions on using subagents."""
         if self.system_prompt is not None:
-            system_prompt = request.system_prompt + "\n\n" + self.system_prompt if request.system_prompt else self.system_prompt
+            system_prompt = (
+                request.system_prompt + "\n\n" + self.system_prompt
+                if request.system_prompt
+                else self.system_prompt
+            )
             return handler(request.override(system_prompt=system_prompt))
         return handler(request)
 
@@ -486,6 +518,10 @@ class SubAgentMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """(async) Update the system prompt to include instructions on using subagents."""
         if self.system_prompt is not None:
-            system_prompt = request.system_prompt + "\n\n" + self.system_prompt if request.system_prompt else self.system_prompt
+            system_prompt = (
+                request.system_prompt + "\n\n" + self.system_prompt
+                if request.system_prompt
+                else self.system_prompt
+            )
             return await handler(request.override(system_prompt=system_prompt))
         return await handler(request)

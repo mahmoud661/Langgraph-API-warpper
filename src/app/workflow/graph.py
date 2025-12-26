@@ -3,13 +3,16 @@
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from langchain.agents import create_agent
-from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig, TodoListMiddleware
+from src.app.workflow.react_agent import create_agent
+from src.app.llm_provider import create_llm
+from langchain.agents.middleware import (
+    HumanInTheLoopMiddleware,
+    InterruptOnConfig,
+    TodoListMiddleware,
+)
 from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain.agents.structured_output import ResponseFormat
-from langchain_anthropic import ChatAnthropic
-from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.cache.base import BaseCache
@@ -17,24 +20,25 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
 from langgraph.types import Checkpointer
 
-from deepagents.backends.protocol import BackendFactory, BackendProtocol
-from deepagents.middleware.filesystem import FilesystemMiddleware
-from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
-from deepagents.middleware.subagents import CompiledSubAgent, SubAgent, SubAgentMiddleware
+from src.app.workflow.backends.protocol import BackendFactory, BackendProtocol
+from src.app.workflow.middleware.filesystem import FilesystemMiddleware
+from src.app.workflow.middleware.patch_tool_calls import PatchToolCallsMiddleware
+from src.app.workflow.middleware.subagents import (
+    CompiledSubAgent,
+    SubAgent,
+    SubAgentMiddleware,
+)
 
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
 
-def get_default_model() -> ChatAnthropic:
+def get_default_model() -> BaseChatModel:
     """Get the default model for deep agents.
 
     Returns:
-        ChatAnthropic instance configured with Claude Sonnet 4.
+        A chat model instance configured via src/app/llm_provider.py.
     """
-    return ChatAnthropic(
-        model_name="claude-sonnet-4-5-20250929",
-        max_tokens=20000,
-    )
+    return create_llm()
 
 
 def create_deep_agent(
@@ -126,7 +130,6 @@ def create_deep_agent(
                     keep=keep,
                     trim_tokens_to_summarize=None,
                 ),
-                AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
                 PatchToolCallsMiddleware(),
             ],
             default_interrupt_on=interrupt_on,
@@ -138,7 +141,6 @@ def create_deep_agent(
             keep=keep,
             trim_tokens_to_summarize=None,
         ),
-        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
         PatchToolCallsMiddleware(),
     ]
     if middleware:
@@ -148,7 +150,11 @@ def create_deep_agent(
 
     return create_agent(
         model,
-        system_prompt=system_prompt + "\n\n" + BASE_AGENT_PROMPT if system_prompt else BASE_AGENT_PROMPT,
+        system_prompt=(
+            system_prompt + "\n\n" + BASE_AGENT_PROMPT
+            if system_prompt
+            else BASE_AGENT_PROMPT
+        ),
         tools=tools,
         middleware=deepagent_middleware,
         response_format=response_format,
@@ -159,3 +165,18 @@ def create_deep_agent(
         name=name,
         cache=cache,
     ).with_config({"recursion_limit": 1000})
+
+
+def make_graph(config: dict) -> CompiledStateGraph:
+    """Create a deep agent graph for langgraph server.
+
+    This is a factory function compatible with langgraph.json that takes
+    a RunnableConfig and returns a compiled graph with default settings.
+
+    Args:
+        config: RunnableConfig dictionary (required by langgraph server)
+
+    Returns:
+        Compiled deep agent graph
+    """
+    return create_deep_agent()

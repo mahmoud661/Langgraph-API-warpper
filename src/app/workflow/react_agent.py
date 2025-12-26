@@ -34,20 +34,20 @@ from langchain.agents.structured_output import (
     ToolStrategy,
 )
 
-from .graph_routing import (
+from src.app.workflow.graph_routing import (
     _add_middleware_edge,
     _make_model_to_model_edge,
     _make_model_to_tools_edge,
     _make_tools_to_model_edge,
 )
-from .middleware_chain import (
+from src.app.workflow.middleware_chain import (
     _chain_async_model_call_handlers,
     _chain_async_tool_call_wrappers,
     _chain_model_call_handlers,
     _chain_tool_call_wrappers,
 )
-from .model_handlers import make_amodel_node, make_model_node
-from .schema_utils import _get_can_jump_to, _resolve_schema
+from src.app.workflow.model_handlers import make_amodel_node, make_model_node
+from src.app.workflow.schema_utils import _get_can_jump_to, _resolve_schema
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -183,7 +183,7 @@ def create_agent(
 
     Example:
         ```python
-        from langchain.agents import create_agent
+        from src.app.workflow.react_agent import create_agent
 
 
         def check_weather(location: str) -> str:

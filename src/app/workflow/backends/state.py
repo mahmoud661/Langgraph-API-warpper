@@ -2,8 +2,8 @@
 
 from typing import TYPE_CHECKING
 
-from deepagents.backends.protocol import BackendProtocol, EditResult, FileInfo, GrepMatch, WriteResult
-from deepagents.backends.utils import (
+from .protocol import BackendProtocol, EditResult, FileInfo, GrepMatch, WriteResult
+from .utils import (
     _glob_search_files,
     create_file_data,
     file_data_to_string,
@@ -125,7 +125,9 @@ class StateBackend(BackendProtocol):
         files = self.runtime.state.get("files", {})
 
         if file_path in files:
-            return WriteResult(error=f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path.")
+            return WriteResult(
+                error=f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path."
+            )
 
         new_file_data = create_file_data(content)
         return WriteResult(path=file_path, files_update={file_path: new_file_data})
@@ -147,14 +149,20 @@ class StateBackend(BackendProtocol):
             return EditResult(error=f"Error: File '{file_path}' not found")
 
         content = file_data_to_string(file_data)
-        result = perform_string_replacement(content, old_string, new_string, replace_all)
+        result = perform_string_replacement(
+            content, old_string, new_string, replace_all
+        )
 
         if isinstance(result, str):
             return EditResult(error=result)
 
         new_content, occurrences = result
         new_file_data = update_file_data(file_data, new_content)
-        return EditResult(path=file_path, files_update={file_path: new_file_data}, occurrences=int(occurrences))
+        return EditResult(
+            path=file_path,
+            files_update={file_path: new_file_data},
+            occurrences=int(occurrences),
+        )
 
     def grep_raw(
         self,

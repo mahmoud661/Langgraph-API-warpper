@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from deepagents.backends.protocol import (
+from .protocol import (
     BackendProtocol,
     EditResult,
     ExecuteResponse,
@@ -13,7 +13,7 @@ from deepagents.backends.protocol import (
     SandboxBackendProtocol,
     WriteResult,
 )
-from deepagents.backends.state import StateBackend
+from .state import StateBackend
 
 
 class CompositeBackend:
@@ -29,7 +29,9 @@ class CompositeBackend:
         self.routes = routes
 
         # Sort routes by length (longest first) for correct prefix matching
-        self.sorted_routes = sorted(routes.items(), key=lambda x: len(x[0]), reverse=True)
+        self.sorted_routes = sorted(
+            routes.items(), key=lambda x: len(x[0]), reverse=True
+        )
 
     def _get_backend_and_key(self, key: str) -> tuple[BackendProtocol, str]:
         """Determine which backend handles this key and strip prefix.
@@ -173,7 +175,9 @@ class CompositeBackend:
         for route_prefix, backend in self.sorted_routes:
             if path is not None and path.startswith(route_prefix.rstrip("/")):
                 search_path = path[len(route_prefix) - 1 :]
-                raw = backend.grep_raw(pattern, search_path if search_path else "/", glob)
+                raw = backend.grep_raw(
+                    pattern, search_path if search_path else "/", glob
+                )
                 if isinstance(raw, str):
                     return raw
                 return [{**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw]
@@ -191,7 +195,9 @@ class CompositeBackend:
             if isinstance(raw, str):
                 # This happens if error occurs
                 return raw
-            all_matches.extend({**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw)
+            all_matches.extend(
+                {**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw
+            )
 
         return all_matches
 
@@ -206,7 +212,9 @@ class CompositeBackend:
         for route_prefix, backend in self.sorted_routes:
             if path is not None and path.startswith(route_prefix.rstrip("/")):
                 search_path = path[len(route_prefix) - 1 :]
-                raw = await backend.agrep_raw(pattern, search_path if search_path else "/", glob)
+                raw = await backend.agrep_raw(
+                    pattern, search_path if search_path else "/", glob
+                )
                 if isinstance(raw, str):
                     return raw
                 return [{**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw]
@@ -224,7 +232,9 @@ class CompositeBackend:
             if isinstance(raw, str):
                 # This happens if error occurs
                 return raw
-            all_matches.extend({**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw)
+            all_matches.extend(
+                {**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw
+            )
 
         return all_matches
 
@@ -236,14 +246,18 @@ class CompositeBackend:
             if path.startswith(route_prefix.rstrip("/")):
                 search_path = path[len(route_prefix) - 1 :]
                 infos = backend.glob_info(pattern, search_path if search_path else "/")
-                return [{**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos]
+                return [
+                    {**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos
+                ]
 
         # Path doesn't match any specific route - search default backend AND all routed backends
         results.extend(self.default.glob_info(pattern, path))
 
         for route_prefix, backend in self.routes.items():
             infos = backend.glob_info(pattern, "/")
-            results.extend({**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos)
+            results.extend(
+                {**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos
+            )
 
         # Deterministic ordering
         results.sort(key=lambda x: x.get("path", ""))
@@ -257,15 +271,21 @@ class CompositeBackend:
         for route_prefix, backend in self.sorted_routes:
             if path.startswith(route_prefix.rstrip("/")):
                 search_path = path[len(route_prefix) - 1 :]
-                infos = await backend.aglob_info(pattern, search_path if search_path else "/")
-                return [{**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos]
+                infos = await backend.aglob_info(
+                    pattern, search_path if search_path else "/"
+                )
+                return [
+                    {**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos
+                ]
 
         # Path doesn't match any specific route - search default backend AND all routed backends
         results.extend(await self.default.aglob_info(pattern, path))
 
         for route_prefix, backend in self.routes.items():
             infos = await backend.aglob_info(pattern, "/")
-            results.extend({**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos)
+            results.extend(
+                {**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos
+            )
 
         # Deterministic ordering
         results.sort(key=lambda x: x.get("path", ""))
@@ -340,7 +360,9 @@ class CompositeBackend:
             Success message or Command object, or error message on failure.
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
-        res = backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
+        res = backend.edit(
+            stripped_key, old_string, new_string, replace_all=replace_all
+        )
         if res.files_update:
             try:
                 runtime = getattr(self.default, "runtime", None)
@@ -362,7 +384,9 @@ class CompositeBackend:
     ) -> EditResult:
         """Async version of edit."""
         backend, stripped_key = self._get_backend_and_key(file_path)
-        res = await backend.aedit(stripped_key, old_string, new_string, replace_all=replace_all)
+        res = await backend.aedit(
+            stripped_key, old_string, new_string, replace_all=replace_all
+        )
         if res.files_update:
             try:
                 runtime = getattr(self.default, "runtime", None)
@@ -437,7 +461,9 @@ class CompositeBackend:
         # Group files by backend, tracking original indices
         from collections import defaultdict
 
-        backend_batches: dict[BackendProtocol, list[tuple[int, str, bytes]]] = defaultdict(list)
+        backend_batches: dict[BackendProtocol, list[tuple[int, str, bytes]]] = (
+            defaultdict(list)
+        )
 
         for idx, (path, content) in enumerate(files):
             backend, stripped_path = self._get_backend_and_key(path)
@@ -456,18 +482,24 @@ class CompositeBackend:
             for i, orig_idx in enumerate(indices):
                 results[orig_idx] = FileUploadResponse(
                     path=files[orig_idx][0],  # Original path
-                    error=batch_responses[i].error if i < len(batch_responses) else None,
+                    error=(
+                        batch_responses[i].error if i < len(batch_responses) else None
+                    ),
                 )
 
         return results  # type: ignore[return-value]
 
-    async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+    async def aupload_files(
+        self, files: list[tuple[str, bytes]]
+    ) -> list[FileUploadResponse]:
         """Async version of upload_files."""
         # Pre-allocate result list
         results: list[FileUploadResponse | None] = [None] * len(files)
 
         # Group files by backend, tracking original indices
-        backend_batches: dict[BackendProtocol, list[tuple[int, str, bytes]]] = defaultdict(list)
+        backend_batches: dict[BackendProtocol, list[tuple[int, str, bytes]]] = (
+            defaultdict(list)
+        )
 
         for idx, (path, content) in enumerate(files):
             backend, stripped_path = self._get_backend_and_key(path)
@@ -486,7 +518,9 @@ class CompositeBackend:
             for i, orig_idx in enumerate(indices):
                 results[orig_idx] = FileUploadResponse(
                     path=files[orig_idx][0],  # Original path
-                    error=batch_responses[i].error if i < len(batch_responses) else None,
+                    error=(
+                        batch_responses[i].error if i < len(batch_responses) else None
+                    ),
                 )
 
         return results  # type: ignore[return-value]
@@ -507,7 +541,9 @@ class CompositeBackend:
         # Pre-allocate result list
         results: list[FileDownloadResponse | None] = [None] * len(paths)
 
-        backend_batches: dict[BackendProtocol, list[tuple[int, str]]] = defaultdict(list)
+        backend_batches: dict[BackendProtocol, list[tuple[int, str]]] = defaultdict(
+            list
+        )
 
         for idx, path in enumerate(paths):
             backend, stripped_path = self._get_backend_and_key(path)
@@ -525,8 +561,12 @@ class CompositeBackend:
             for i, orig_idx in enumerate(indices):
                 results[orig_idx] = FileDownloadResponse(
                     path=paths[orig_idx],  # Original path
-                    content=batch_responses[i].content if i < len(batch_responses) else None,
-                    error=batch_responses[i].error if i < len(batch_responses) else None,
+                    content=(
+                        batch_responses[i].content if i < len(batch_responses) else None
+                    ),
+                    error=(
+                        batch_responses[i].error if i < len(batch_responses) else None
+                    ),
                 )
 
         return results  # type: ignore[return-value]
@@ -536,7 +576,9 @@ class CompositeBackend:
         # Pre-allocate result list
         results: list[FileDownloadResponse | None] = [None] * len(paths)
 
-        backend_batches: dict[BackendProtocol, list[tuple[int, str]]] = defaultdict(list)
+        backend_batches: dict[BackendProtocol, list[tuple[int, str]]] = defaultdict(
+            list
+        )
 
         for idx, path in enumerate(paths):
             backend, stripped_path = self._get_backend_and_key(path)
@@ -554,8 +596,12 @@ class CompositeBackend:
             for i, orig_idx in enumerate(indices):
                 results[orig_idx] = FileDownloadResponse(
                     path=paths[orig_idx],  # Original path
-                    content=batch_responses[i].content if i < len(batch_responses) else None,
-                    error=batch_responses[i].error if i < len(batch_responses) else None,
+                    content=(
+                        batch_responses[i].content if i < len(batch_responses) else None
+                    ),
+                    error=(
+                        batch_responses[i].error if i < len(batch_responses) else None
+                    ),
                 )
 
         return results  # type: ignore[return-value]

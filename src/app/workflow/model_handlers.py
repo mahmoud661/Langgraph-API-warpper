@@ -26,7 +26,7 @@ if TYPE_CHECKING:
         ToolStrategy,
     )
 
-from .strategy_detection import (
+from src.app.workflow.strategy_detection import (
     _handle_structured_output_error,
     _supports_provider_strategy,
 )

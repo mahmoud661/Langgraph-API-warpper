@@ -1,10 +1,10 @@
 """Memory backends for pluggable file storage."""
 
-from deepagents.backends.composite import CompositeBackend
-from deepagents.backends.filesystem import FilesystemBackend
-from deepagents.backends.protocol import BackendProtocol
-from deepagents.backends.state import StateBackend
-from deepagents.backends.store import StoreBackend
+from .composite import CompositeBackend
+from .filesystem import FilesystemBackend
+from .protocol import BackendProtocol
+from .state import StateBackend
+from .store import StoreBackend
 
 __all__ = [
     "BackendProtocol",
