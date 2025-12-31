@@ -1,3 +1,5 @@
+"""Constants for structured output handling."""
+
 from __future__ import annotations
 
 STRUCTURED_OUTPUT_ERROR_TEMPLATE = "Error: {error}\n Please fix your mistakes."

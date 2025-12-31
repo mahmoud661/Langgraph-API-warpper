@@ -1,39 +1,21 @@
-"""Middleware for providing filesystem tools to an agent."""
+"""Filesystem tool generators and descriptions."""
 
 # ruff: noqa: E501
 
-import os
-import re
-from collections.abc import Awaitable, Callable, Sequence
-from typing import Annotated, Literal, NotRequired
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Literal
 
-from langchain.agents.middleware.types import (
-    AgentMiddleware,
-    AgentState,
-    ModelRequest,
-    ModelResponse,
-)
 from langchain.tools import ToolRuntime
-from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.types import Command
-from typing_extensions import TypedDict
 
-from src.app.workflow.backends import StateBackend
-
-# Re-export type here for backwards compatibility
-from src.app.workflow.backends.protocol import BACKEND_TYPES as BACKEND_TYPES
-from src.app.workflow.backends.protocol import (
-    BackendProtocol,
-    EditResult,
-    SandboxBackendProtocol,
-    WriteResult,
-)
-from src.app.workflow.backends.utils import (
+from src.app.domain.filesystem import FilesystemState, validate_path
+from src.app.domain.storage.protocol import BackendProtocol, SandboxBackendProtocol
+from src.app.domain.storage.types import EditResult, WriteResult
+from src.app.infrastructure.storage.utils import (
     format_content_with_line_numbers,
     format_grep_matches,
-    sanitize_tool_call_id,
     truncate_if_too_long,
 )
 
@@ -42,70 +24,6 @@ MAX_LINE_LENGTH = 2000
 LINE_NUMBER_WIDTH = 6
 DEFAULT_READ_OFFSET = 0
 DEFAULT_READ_LIMIT = 500
-
-
-class FileData(TypedDict):
-    """Data structure for storing file contents with metadata."""
-
-    content: list[str]
-    """Lines of the file."""
-
-    created_at: str
-    """ISO 8601 timestamp of file creation."""
-
-    modified_at: str
-    """ISO 8601 timestamp of last modification."""
-
-
-def _file_data_reducer(
-    left: dict[str, FileData] | None, right: dict[str, FileData | None]
-) -> dict[str, FileData]:
-
-    if left is None:
-        return {k: v for k, v in right.items() if v is not None}
-
-    result = {**left}
-    for key, value in right.items():
-        if value is None:
-            result.pop(key, None)
-        else:
-            result[key] = value
-    return result
-
-
-def _validate_path(path: str, *, allowed_prefixes: Sequence[str] | None = None) -> str:
-
-    if ".." in path or path.startswith("~"):
-        msg = f"Path traversal not allowed: {path}"
-        raise ValueError(msg)
-
-    # Reject Windows absolute paths (e.g., C:\..., D:/...)
-    # This maintains consistency in virtual filesystem paths
-    if re.match(r"^[a-zA-Z]:", path):
-        msg = f"Windows absolute paths are not supported: {path}. Please use virtual paths starting with / (e.g., /workspace/file.txt)"
-        raise ValueError(msg)
-
-    normalized = os.path.normpath(path)
-    normalized = normalized.replace("\\", "/")
-
-    if not normalized.startswith("/"):
-        normalized = f"/{normalized}"
-
-    if allowed_prefixes is not None and not any(
-        normalized.startswith(prefix) for prefix in allowed_prefixes
-    ):
-        msg = f"Path must start with one of {allowed_prefixes}: {path}"
-        raise ValueError(msg)
-
-    return normalized
-
-
-class FilesystemState(AgentState):
-    """State for the filesystem middleware."""
-
-    files: Annotated[NotRequired[dict[str, FileData]], _file_data_reducer]
-    """Files in the filesystem."""
-
 
 LIST_FILES_TOOL_DESCRIPTION = """Lists all files in the filesystem, filtering by directory.
 
@@ -142,7 +60,6 @@ Usage:
 - The edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`.
 - Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."""
 
-
 WRITE_FILE_TOOL_DESCRIPTION = """Writes to a new file in the filesystem.
 
 Usage:
@@ -150,7 +67,6 @@ Usage:
 - The content parameter must be a string
 - The write_file tool will create the a new file.
 - Prefer to edit existing files over creating new ones when possible."""
-
 
 GLOB_TOOL_DESCRIPTION = """Find files matching a glob pattern.
 
@@ -246,7 +162,10 @@ Use this tool to run commands, scripts, tests, builds, and other shell operation
 - execute: run a shell command in the sandbox (returns output and exit code)"""
 
 
-def _get_backend(backend: BACKEND_TYPES, runtime: ToolRuntime) -> BackendProtocol:
+def _get_backend(
+    backend: "BackendProtocol | Callable[[ToolRuntime], BackendProtocol]",
+    runtime: "ToolRuntime",
+) -> BackendProtocol:
     """Get the resolved backend instance from backend or factory.
 
     Args:
@@ -262,16 +181,16 @@ def _get_backend(backend: BACKEND_TYPES, runtime: ToolRuntime) -> BackendProtoco
 
 
 def _ls_tool_generator(
-    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
+    backend: "BackendProtocol | Callable[[ToolRuntime], BackendProtocol]",
     custom_description: str | None = None,
 ) -> BaseTool:
-
+    """Generate ls tool for listing files."""
     tool_description = custom_description or LIST_FILES_TOOL_DESCRIPTION
 
     def sync_ls(runtime: ToolRuntime[None, FilesystemState], path: str) -> str:
         """Synchronous wrapper for ls tool."""
         resolved_backend = _get_backend(backend, runtime)
-        validated_path = _validate_path(path)
+        validated_path = validate_path(path)
         infos = resolved_backend.ls_info(validated_path)
         paths = [fi.get("path", "") for fi in infos]
         result = truncate_if_too_long(paths)
@@ -280,7 +199,7 @@ def _ls_tool_generator(
     async def async_ls(runtime: ToolRuntime[None, FilesystemState], path: str) -> str:
         """Asynchronous wrapper for ls tool."""
         resolved_backend = _get_backend(backend, runtime)
-        validated_path = _validate_path(path)
+        validated_path = validate_path(path)
         infos = await resolved_backend.als_info(validated_path)
         paths = [fi.get("path", "") for fi in infos]
         result = truncate_if_too_long(paths)
@@ -295,10 +214,10 @@ def _ls_tool_generator(
 
 
 def _read_file_tool_generator(
-    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
+    backend: "BackendProtocol | Callable[[ToolRuntime], BackendProtocol]",
     custom_description: str | None = None,
 ) -> BaseTool:
-
+    """Generate read_file tool for reading files."""
     tool_description = custom_description or READ_FILE_TOOL_DESCRIPTION
 
     def sync_read_file(
@@ -309,7 +228,7 @@ def _read_file_tool_generator(
     ) -> str:
         """Synchronous wrapper for read_file tool."""
         resolved_backend = _get_backend(backend, runtime)
-        file_path = _validate_path(file_path)
+        file_path = validate_path(file_path)
         return resolved_backend.read(file_path, offset=offset, limit=limit)
 
     async def async_read_file(
@@ -320,7 +239,7 @@ def _read_file_tool_generator(
     ) -> str:
         """Asynchronous wrapper for read_file tool."""
         resolved_backend = _get_backend(backend, runtime)
-        file_path = _validate_path(file_path)
+        file_path = validate_path(file_path)
         return await resolved_backend.aread(file_path, offset=offset, limit=limit)
 
     return StructuredTool.from_function(
@@ -332,10 +251,10 @@ def _read_file_tool_generator(
 
 
 def _write_file_tool_generator(
-    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
+    backend: "BackendProtocol | Callable[[ToolRuntime], BackendProtocol]",
     custom_description: str | None = None,
 ) -> BaseTool:
-
+    """Generate write_file tool for writing files."""
     tool_description = custom_description or WRITE_FILE_TOOL_DESCRIPTION
 
     def sync_write_file(
@@ -345,7 +264,7 @@ def _write_file_tool_generator(
     ) -> Command | str:
         """Synchronous wrapper for write_file tool."""
         resolved_backend = _get_backend(backend, runtime)
-        file_path = _validate_path(file_path)
+        file_path = validate_path(file_path)
         res: WriteResult = resolved_backend.write(file_path, content)
         if res.error:
             return res.error
@@ -371,7 +290,7 @@ def _write_file_tool_generator(
     ) -> Command | str:
         """Asynchronous wrapper for write_file tool."""
         resolved_backend = _get_backend(backend, runtime)
-        file_path = _validate_path(file_path)
+        file_path = validate_path(file_path)
         res: WriteResult = await resolved_backend.awrite(file_path, content)
         if res.error:
             return res.error
@@ -399,10 +318,10 @@ def _write_file_tool_generator(
 
 
 def _edit_file_tool_generator(
-    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
+    backend: "BackendProtocol | Callable[[ToolRuntime], BackendProtocol]",
     custom_description: str | None = None,
 ) -> BaseTool:
-
+    """Generate edit_file tool for editing files."""
     tool_description = custom_description or EDIT_FILE_TOOL_DESCRIPTION
 
     def sync_edit_file(
@@ -415,7 +334,7 @@ def _edit_file_tool_generator(
     ) -> Command | str:
         """Synchronous wrapper for edit_file tool."""
         resolved_backend = _get_backend(backend, runtime)
-        file_path = _validate_path(file_path)
+        file_path = validate_path(file_path)
         res: EditResult = resolved_backend.edit(
             file_path, old_string, new_string, replace_all=replace_all
         )
@@ -445,7 +364,7 @@ def _edit_file_tool_generator(
     ) -> Command | str:
         """Asynchronous wrapper for edit_file tool."""
         resolved_backend = _get_backend(backend, runtime)
-        file_path = _validate_path(file_path)
+        file_path = validate_path(file_path)
         res: EditResult = await resolved_backend.aedit(
             file_path, old_string, new_string, replace_all=replace_all
         )
@@ -474,10 +393,10 @@ def _edit_file_tool_generator(
 
 
 def _glob_tool_generator(
-    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
+    backend: "BackendProtocol | Callable[[ToolRuntime], BackendProtocol]",
     custom_description: str | None = None,
 ) -> BaseTool:
-
+    """Generate glob tool for pattern matching files."""
     tool_description = custom_description or GLOB_TOOL_DESCRIPTION
 
     def sync_glob(
@@ -509,10 +428,10 @@ def _glob_tool_generator(
 
 
 def _grep_tool_generator(
-    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
+    backend: "BackendProtocol | Callable[[ToolRuntime], BackendProtocol]",
     custom_description: str | None = None,
 ) -> BaseTool:
-
+    """Generate grep tool for searching files."""
     tool_description = custom_description or GREP_TOOL_DESCRIPTION
 
     def sync_grep(
@@ -557,10 +476,10 @@ def _grep_tool_generator(
     )
 
 
-def _supports_execution(backend: BackendProtocol) -> bool:
-
+def supports_execution(backend: BackendProtocol) -> bool:
+    """Check if backend supports command execution."""
     # Import here to avoid circular dependency
-    from ..backends.composite import CompositeBackend
+    from src.app.infrastructure.storage.composite import CompositeBackend
 
     # For CompositeBackend, check the default backend
     if isinstance(backend, CompositeBackend):
@@ -571,10 +490,10 @@ def _supports_execution(backend: BackendProtocol) -> bool:
 
 
 def _execute_tool_generator(
-    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
+    backend: "BackendProtocol | Callable[[ToolRuntime], BackendProtocol]",
     custom_description: str | None = None,
 ) -> BaseTool:
-
+    """Generate execute tool for running commands."""
     tool_description = custom_description or EXECUTE_TOOL_DESCRIPTION
 
     def sync_execute(
@@ -585,7 +504,7 @@ def _execute_tool_generator(
         resolved_backend = _get_backend(backend, runtime)
 
         # Runtime check - fail gracefully if not supported
-        if not _supports_execution(resolved_backend):
+        if not supports_execution(resolved_backend):
             return (
                 "Error: Execution not available. This agent's backend "
                 "does not support command execution (SandboxBackendProtocol). "
@@ -618,7 +537,7 @@ def _execute_tool_generator(
         resolved_backend = _get_backend(backend, runtime)
 
         # Runtime check - fail gracefully if not supported
-        if not _supports_execution(resolved_backend):
+        if not supports_execution(resolved_backend):
             return (
                 "Error: Execution not available. This agent's backend "
                 "does not support command execution (SandboxBackendProtocol). "
@@ -662,11 +581,19 @@ TOOL_GENERATORS = {
 }
 
 
-def _get_filesystem_tools(
+def get_filesystem_tools(
     backend: BackendProtocol,
     custom_tool_descriptions: dict[str, str] | None = None,
 ) -> list[BaseTool]:
+    """Generate all filesystem tools for the given backend.
 
+    Args:
+        backend: Backend instance or factory function.
+        custom_tool_descriptions: Optional custom descriptions for tools.
+
+    Returns:
+        List of filesystem tools.
+    """
     if custom_tool_descriptions is None:
         custom_tool_descriptions = {}
     tools = []
@@ -675,271 +602,3 @@ def _get_filesystem_tools(
         tool = tool_generator(backend, custom_tool_descriptions.get(tool_name))
         tools.append(tool)
     return tools
-
-
-TOO_LARGE_TOOL_MSG = """Tool result too large, the result of this tool call {tool_call_id} was saved in the filesystem at this path: {file_path}
-You can read the result from the filesystem by using the read_file tool, but make sure to only read part of the result at a time.
-You can do this by specifying an offset and limit in the read_file tool call.
-For example, to read the first 100 lines, you can use the read_file tool with offset=0 and limit=100.
-
-Here are the first 10 lines of the result:
-{content_sample}
-"""
-
-
-class FilesystemMiddleware(AgentMiddleware):
-
-
-    state_schema = FilesystemState
-
-    def __init__(
-        self,
-        *,
-        backend: BACKEND_TYPES | None = None,
-        system_prompt: str | None = None,
-        custom_tool_descriptions: dict[str, str] | None = None,
-        tool_token_limit_before_evict: int | None = 20000,
-    ) -> None:
-
-        self.tool_token_limit_before_evict = tool_token_limit_before_evict
-
-        # Use provided backend or default to StateBackend factory
-        self.backend = backend if backend is not None else (lambda rt: StateBackend(rt))
-
-        # Set system prompt (allow full override or None to generate dynamically)
-        self._custom_system_prompt = system_prompt
-
-        self.tools = _get_filesystem_tools(self.backend, custom_tool_descriptions)
-
-    def _get_backend(self, runtime: ToolRuntime) -> BackendProtocol:
-
-        if callable(self.backend):
-            return self.backend(runtime)
-        return self.backend
-
-    def wrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
-    ) -> ModelResponse:
-
-        # Check if execute tool is present and if backend supports it
-        has_execute_tool = any(
-            (tool.name if hasattr(tool, "name") else tool.get("name")) == "execute"
-            for tool in request.tools
-        )
-
-        backend_supports_execution = False
-        if has_execute_tool:
-            # Resolve backend to check execution support
-            backend = self._get_backend(request.runtime)
-            backend_supports_execution = _supports_execution(backend)
-
-            # If execute tool exists but backend doesn't support it, filter it out
-            if not backend_supports_execution:
-                filtered_tools = [
-                    tool
-                    for tool in request.tools
-                    if (tool.name if hasattr(tool, "name") else tool.get("name"))
-                    != "execute"
-                ]
-                request = request.override(tools=filtered_tools)
-                has_execute_tool = False
-
-        # Use custom system prompt if provided, otherwise generate dynamically
-        if self._custom_system_prompt is not None:
-            system_prompt = self._custom_system_prompt
-        else:
-            # Build dynamic system prompt based on available tools
-            prompt_parts = [FILESYSTEM_SYSTEM_PROMPT]
-
-            # Add execution instructions if execute tool is available
-            if has_execute_tool and backend_supports_execution:
-                prompt_parts.append(EXECUTION_SYSTEM_PROMPT)
-
-            system_prompt = "\n\n".join(prompt_parts)
-
-        if system_prompt:
-            request = request.override(
-                system_prompt=(
-                    request.system_prompt + "\n\n" + system_prompt
-                    if request.system_prompt
-                    else system_prompt
-                )
-            )
-
-        return handler(request)
-
-    async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
-    ) -> ModelResponse:
-
-        # Check if execute tool is present and if backend supports it
-        has_execute_tool = any(
-            (tool.name if hasattr(tool, "name") else tool.get("name")) == "execute"
-            for tool in request.tools
-        )
-
-        backend_supports_execution = False
-        if has_execute_tool:
-            # Resolve backend to check execution support
-            backend = self._get_backend(request.runtime)
-            backend_supports_execution = _supports_execution(backend)
-
-            # If execute tool exists but backend doesn't support it, filter it out
-            if not backend_supports_execution:
-                filtered_tools = [
-                    tool
-                    for tool in request.tools
-                    if (tool.name if hasattr(tool, "name") else tool.get("name"))
-                    != "execute"
-                ]
-                request = request.override(tools=filtered_tools)
-                has_execute_tool = False
-
-        # Use custom system prompt if provided, otherwise generate dynamically
-        if self._custom_system_prompt is not None:
-            system_prompt = self._custom_system_prompt
-        else:
-            # Build dynamic system prompt based on available tools
-            prompt_parts = [FILESYSTEM_SYSTEM_PROMPT]
-
-            # Add execution instructions if execute tool is available
-            if has_execute_tool and backend_supports_execution:
-                prompt_parts.append(EXECUTION_SYSTEM_PROMPT)
-
-            system_prompt = "\n\n".join(prompt_parts)
-
-        if system_prompt:
-            request = request.override(
-                system_prompt=(
-                    request.system_prompt + "\n\n" + system_prompt
-                    if request.system_prompt
-                    else system_prompt
-                )
-            )
-
-        return await handler(request)
-
-    def _process_large_message(
-        self,
-        message: ToolMessage,
-        resolved_backend: BackendProtocol,
-    ) -> tuple[ToolMessage, dict[str, FileData] | None]:
-        content = message.content
-        if (
-            not isinstance(content, str)
-            or len(content) <= 4 * self.tool_token_limit_before_evict
-        ):
-            return message, None
-
-        sanitized_id = sanitize_tool_call_id(message.tool_call_id)
-        file_path = f"/large_tool_results/{sanitized_id}"
-        result = resolved_backend.write(file_path, content)
-        if result.error:
-            return message, None
-        content_sample = format_content_with_line_numbers(
-            [line[:1000] for line in content.splitlines()[:10]], start_line=1
-        )
-        processed_message = ToolMessage(
-            TOO_LARGE_TOOL_MSG.format(
-                tool_call_id=message.tool_call_id,
-                file_path=file_path,
-                content_sample=content_sample,
-            ),
-            tool_call_id=message.tool_call_id,
-        )
-        return processed_message, result.files_update
-
-    def _intercept_large_tool_result(
-        self, tool_result: ToolMessage | Command, runtime: ToolRuntime
-    ) -> ToolMessage | Command:
-        if isinstance(tool_result, ToolMessage) and isinstance(
-            tool_result.content, str
-        ):
-            if not (
-                self.tool_token_limit_before_evict
-                and len(tool_result.content) > 4 * self.tool_token_limit_before_evict
-            ):
-                return tool_result
-            resolved_backend = self._get_backend(runtime)
-            processed_message, files_update = self._process_large_message(
-                tool_result,
-                resolved_backend,
-            )
-            return (
-                Command(
-                    update={
-                        "files": files_update,
-                        "messages": [processed_message],
-                    }
-                )
-                if files_update is not None
-                else processed_message
-            )
-
-        if isinstance(tool_result, Command):
-            update = tool_result.update
-            if update is None:
-                return tool_result
-            command_messages = update.get("messages", [])
-            accumulated_file_updates = dict(update.get("files", {}))
-            resolved_backend = self._get_backend(runtime)
-            processed_messages = []
-            for message in command_messages:
-                if not (
-                    self.tool_token_limit_before_evict
-                    and isinstance(message, ToolMessage)
-                    and isinstance(message.content, str)
-                    and len(message.content) > 4 * self.tool_token_limit_before_evict
-                ):
-                    processed_messages.append(message)
-                    continue
-                processed_message, files_update = self._process_large_message(
-                    message,
-                    resolved_backend,
-                )
-                processed_messages.append(processed_message)
-                if files_update is not None:
-                    accumulated_file_updates.update(files_update)
-            return Command(
-                update={
-                    **update,
-                    "messages": processed_messages,
-                    "files": accumulated_file_updates,
-                }
-            )
-
-        return tool_result
-
-    def wrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage | Command],
-    ) -> ToolMessage | Command:
-
-        if (
-            self.tool_token_limit_before_evict is None
-            or request.tool_call["name"] in TOOL_GENERATORS
-        ):
-            return handler(request)
-
-        tool_result = handler(request)
-        return self._intercept_large_tool_result(tool_result, request.runtime)
-
-    async def awrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
-    ) -> ToolMessage | Command:
-
-        if (
-            self.tool_token_limit_before_evict is None
-            or request.tool_call["name"] in TOOL_GENERATORS
-        ):
-            return await handler(request)
-
-        tool_result = await handler(request)
-        return self._intercept_large_tool_result(tool_result, request.runtime)

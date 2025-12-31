@@ -1,3 +1,8 @@
+"""Schema resolution and merging utilities for LangGraph agent middleware.
+
+Handles merging multiple middleware schemas and respecting omit flags.
+"""
+
 from __future__ import annotations
 
 from typing import (
@@ -19,7 +24,7 @@ if TYPE_CHECKING:
     )
 
 
-def _resolve_schema(
+def resolve_schema(
     schemas: set[type], schema_name: str, omit_flag: str | None = None
 ) -> type:
     """Resolve schema by merging schemas and optionally respecting `OmitFromSchema` annotations.
@@ -42,7 +47,7 @@ def _resolve_schema(
 
             if omit_flag:
                 # Check for omission in the annotation metadata
-                metadata = _extract_metadata(field_type)
+                metadata = extract_metadata(field_type)
                 for meta in metadata:
                     if (
                         isinstance(meta, OmitFromSchema)
@@ -57,7 +62,7 @@ def _resolve_schema(
     return TypedDict(schema_name, all_annotations)  # type: ignore[operator]
 
 
-def _extract_metadata(type_: type) -> list:
+def extract_metadata(type_: type) -> list:
     """Extract metadata from a field type, handling Required/NotRequired and Annotated wrappers."""
     # Handle Required[Annotated[...]] or NotRequired[Annotated[...]]
     if get_origin(type_) in (Required, NotRequired):
@@ -72,7 +77,7 @@ def _extract_metadata(type_: type) -> list:
     return []
 
 
-def _get_can_jump_to(
+def get_can_jump_to(
     middleware: AgentMiddleware[Any, Any], hook_name: str
 ) -> list[JumpTo]:
     """Get the `can_jump_to` list from either sync or async hook methods.

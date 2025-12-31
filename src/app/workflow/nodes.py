@@ -3,7 +3,7 @@ from typing import Literal
 
 from langchain.chat_models import init_chat_model
 
-from src.app.workflow.state import AgentState
+from src.app.domain.workflow.state import AgentState
 
 
 def call_llm(state: AgentState) -> dict:

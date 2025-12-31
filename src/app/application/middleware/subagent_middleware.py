@@ -1,7 +1,8 @@
-from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, NotRequired, TypedDict, cast
+"""Subagent middleware for LangGraph workflows."""
 
-from src.app.workflow.react_agent import create_agent
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any, cast
+
 from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -15,53 +16,15 @@ from langchain_core.runnables import Runnable
 from langchain_core.tools import StructuredTool
 from langgraph.types import Command
 
+from src.app.domain.subagent import CompiledSubAgent, SubAgent, EXCLUDED_STATE_KEYS
+from src.app.workflow.react_agent import create_agent
 
-class SubAgent(TypedDict):
-
-    name: str
-    """The name of the agent."""
-
-    description: str
-    """The description of the agent."""
-
-    system_prompt: str
-    """The system prompt to use for the agent."""
-
-    tools: Sequence[BaseTool | Callable | dict[str, Any]]
-    """The tools to use for the agent."""
-
-    model: NotRequired[str | BaseChatModel]
-    """The model for the agent. Defaults to `default_model`."""
-
-    middleware: NotRequired[list[AgentMiddleware]]
-    """Additional middleware to append after `default_middleware`."""
-
-    interrupt_on: NotRequired[dict[str, bool | InterruptOnConfig]]
-    """The tool configs to use for the agent."""
-
-
-class CompiledSubAgent(TypedDict):
-    """A pre-compiled agent spec."""
-
-    name: str
-    """The name of the agent."""
-
-    description: str
-    """The description of the agent."""
-
-    runnable: Runnable
-    """The Runnable to use for the agent."""
+__all__ = ["SubAgent", "CompiledSubAgent", "SubAgentMiddleware"]
 
 
 DEFAULT_SUBAGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
-# State keys that are excluded when passing state to subagents and when returning
-# updates from subagents.
-# When returning updates:
-# 1. The messages key is handled explicitly to ensure only the final message is included
-# 2. The todos and structured_response keys are excluded as they do not have a defined reducer
-#    and no clear meaning for returning them from a subagent to the main agent.
-_EXCLUDED_STATE_KEYS = {"messages", "todos", "structured_response"}
+DEFAULT_GENERAL_PURPOSE_DESCRIPTION = "General-purpose agent for researching complex questions, searching for files and content, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. This agent has access to all tools as the main agent."  # noqa: E501
 
 TASK_TOOL_DESCRIPTION = """Launch an ephemeral subagent to handle complex, multi-step independent tasks with isolated context windows.
 
@@ -202,9 +165,6 @@ When NOT to use the task tool:
 - You should use the `task` tool whenever you have a complex task that will take multiple steps, and is independent from other tasks that the agent needs to complete. These agents are highly competent and efficient."""  # noqa: E501
 
 
-DEFAULT_GENERAL_PURPOSE_DESCRIPTION = "General-purpose agent for researching complex questions, searching for files and content, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. This agent has access to all tools as the main agent."  # noqa: E501
-
-
 def _get_subagents(
     *,
     default_model: str | BaseChatModel,
@@ -214,7 +174,7 @@ def _get_subagents(
     subagents: list[SubAgent | CompiledSubAgent],
     general_purpose_agent: bool,
 ) -> tuple[dict[str, Any], list[str]]:
-
+    """Get compiled subagent runnables and their descriptions."""
     # Use empty list if None (no default middleware)
     default_subagent_middleware = default_middleware or []
 
@@ -279,7 +239,7 @@ def _create_task_tool(
     general_purpose_agent: bool,
     task_description: str | None = None,
 ) -> BaseTool:
-
+    """Create the task tool for spawning subagents."""
     subagent_graphs, subagent_descriptions = _get_subagents(
         default_model=default_model,
         default_tools=default_tools,
@@ -291,9 +251,7 @@ def _create_task_tool(
     subagent_description_str = "\n".join(subagent_descriptions)
 
     def _return_command_with_state_update(result: dict, tool_call_id: str) -> Command:
-        state_update = {
-            k: v for k, v in result.items() if k not in _EXCLUDED_STATE_KEYS
-        }
+        state_update = {k: v for k, v in result.items() if k not in EXCLUDED_STATE_KEYS}
         # Strip trailing whitespace to prevent API errors with Anthropic
         message_text = (
             result["messages"][-1].text.rstrip() if result["messages"][-1].text else ""
@@ -312,7 +270,7 @@ def _create_task_tool(
         subagent = subagent_graphs[subagent_type]
         # Create a new state dict to avoid mutating the original
         subagent_state = {
-            k: v for k, v in runtime.state.items() if k not in _EXCLUDED_STATE_KEYS
+            k: v for k, v in runtime.state.items() if k not in EXCLUDED_STATE_KEYS
         }
         subagent_state["messages"] = [HumanMessage(content=description)]
         return subagent, subagent_state
@@ -371,6 +329,7 @@ def _create_task_tool(
 
 
 class SubAgentMiddleware(AgentMiddleware):
+    """LangGraph middleware that provides subagent task tool."""
 
     def __init__(
         self,
@@ -384,7 +343,7 @@ class SubAgentMiddleware(AgentMiddleware):
         general_purpose_agent: bool = True,
         task_description: str | None = None,
     ) -> None:
-        """Initialize the SubAgentMiddleware."""
+        """Initialize SubAgentMiddleware."""
         super().__init__()
         self.system_prompt = system_prompt
         task_tool = _create_task_tool(
@@ -403,7 +362,7 @@ class SubAgentMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        """Update the system prompt to include instructions on using subagents."""
+        """Update system prompt to include subagent instructions."""
         if self.system_prompt is not None:
             system_prompt = (
                 request.system_prompt + "\n\n" + self.system_prompt
@@ -418,7 +377,7 @@ class SubAgentMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        """(async) Update the system prompt to include instructions on using subagents."""
+        """Update system prompt to include subagent instructions (async)."""
         if self.system_prompt is not None:
             system_prompt = (
                 request.system_prompt + "\n\n" + self.system_prompt

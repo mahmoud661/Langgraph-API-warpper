@@ -1,7 +1,11 @@
 """Middleware for the DeepAgent."""
 
-from .filesystem import FilesystemMiddleware
-from .subagents import CompiledSubAgent, SubAgent, SubAgentMiddleware
+from src.app.application.middleware.filesystem_middleware import FilesystemMiddleware
+from src.app.application.middleware.subagent_middleware import (
+    CompiledSubAgent,
+    SubAgent,
+    SubAgentMiddleware,
+)
 
 __all__ = [
     "CompiledSubAgent",

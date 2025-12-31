@@ -3,7 +3,7 @@
         "."
     ],
     "graphs": {
-        "deep_agent": "./src/app/workflow/graph.py:make_graph"
+        "deep_agent": "src.app.application.agent.make_graph:make_graph"
     },
     "env": ".env",
     "python_version": "3.11"

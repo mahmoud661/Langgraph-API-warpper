@@ -1,10 +1,13 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from langchain.tools import ToolRuntime
 
 from langgraph.config import get_config
 from langgraph.store.base import BaseStore, Item
 
-from .protocol import (
-    BackendProtocol,
+from src.app.domain.storage.protocol import BackendProtocol
+from src.app.domain.storage.types import (
     EditResult,
     FileDownloadResponse,
     FileInfo,
@@ -24,7 +27,6 @@ from .utils import (
 
 
 class StoreBackend(BackendProtocol):
-
 
     def __init__(self, runtime: "ToolRuntime"):
         """Initialize StoreBackend with runtime.
